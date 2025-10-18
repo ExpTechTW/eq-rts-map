@@ -38,6 +38,7 @@ export interface StationFeature {
     intensity: number;
     color: string;
     sortKey: number;
+    alert?: boolean;
   };
 }
 
@@ -171,6 +172,7 @@ export function createStationGeoJSON(
         intensity,
         color,
         sortKey: intensity,
+        alert: !!rts.alert,
       },
     });
   }

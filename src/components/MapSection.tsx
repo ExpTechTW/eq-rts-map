@@ -1,17 +1,15 @@
 'use client';
 
 import React, { useMemo, useRef, useState, useEffect, useCallback } from 'react';
-import Map, { NavigationControl, Source, Layer, type MapRef } from 'react-map-gl/maplibre';
+import Map, { Marker } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { fetchAndProcessStationData, type StationGeoJSON } from '@/lib/rts';
+import { fetchAndProcessStationData, type StationGeoJSON, type StationFeature } from '@/lib/rts';
+import StationMarker from './StationMarker';
 
 const MapSection = React.memo(() => {
-  const mapRef = useRef<MapRef>(null);
   const [stationData, setStationData] = useState<StationGeoJSON | null>(null);
   const [dataTime, setDataTime] = useState<number>(0);
   const [maxIntensity, setMaxIntensity] = useState<number>(-3);
-  const [isMapReady, setIsMapReady] = useState<boolean>(false);
-  const sourceInitializedRef = useRef<boolean>(false);
 
   const mapStyle: any = useMemo(() => ({
     version: 8,
@@ -98,52 +96,6 @@ const MapSection = React.memo(() => {
     return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
   };
 
-  const initializeMapSource = useCallback(() => {
-    if (!mapRef.current || !stationData || sourceInitializedRef.current) return;
-
-    const map = mapRef.current.getMap();
-    
-    if (!map.getSource('stations')) {
-      map.addSource('stations', {
-        type: 'geojson',
-        data: stationData,
-      });
-
-      map.addLayer({
-        id: 'station-circles',
-        type: 'circle',
-        source: 'stations',
-        layout: {
-          'circle-sort-key': ['get', 'sortKey'],
-        },
-        paint: {
-          'circle-radius': 4,
-          'circle-color': ['get', 'color'],
-          'circle-opacity': 1,
-          'circle-stroke-width': 1,
-          'circle-stroke-color': '#ffffff',
-        },
-      });
-
-      sourceInitializedRef.current = true;
-    }
-  }, [stationData]);
-
-  const updateMapData = useCallback((newData: StationGeoJSON) => {
-    if (!mapRef.current || !sourceInitializedRef.current) return;
-
-    const map = mapRef.current.getMap();
-    const source = map.getSource('stations') as any;
-    
-    if (source && source.setData) {
-      source.setData(newData);
-    }
-  }, []);
-
-  const handleMapLoad = useCallback(() => {
-    setIsMapReady(true);
-  }, []);
-
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -160,9 +112,6 @@ const MapSection = React.memo(() => {
         });
         setMaxIntensity(max);
 
-        if (isMapReady && sourceInitializedRef.current) {
-          updateMapData(data.geojson);
-        }
       } catch (error) {
       }
     };
@@ -171,18 +120,16 @@ const MapSection = React.memo(() => {
     const interval = setInterval(fetchData, 1000);
 
     return () => clearInterval(interval);
-  }, [isMapReady, updateMapData]);
+  }, []);
 
-  useEffect(() => {
-    if (isMapReady && stationData) {
-      initializeMapSource();
-    }
-  }, [isMapReady, stationData, initializeMapSource]);
+  const sortedFeatures = useMemo(() => {
+    if (!stationData) return [];
+    return [...stationData.features].sort((a, b) => a.properties.intensity - b.properties.intensity);
+  }, [stationData]);
 
   return (
     <div className="w-1/2 h-full relative">
       <Map
-        ref={mapRef}
         initialViewState={{
           longitude: 120.8,
           latitude: 23.6,
@@ -198,9 +145,22 @@ const MapSection = React.memo(() => {
         dragRotate={false}
         touchZoomRotate={false}
         boxZoom={false}
-        onLoad={handleMapLoad}
         onError={() => {}}
       >
+        {sortedFeatures.map((station: StationFeature) => (
+          <Marker
+            key={station.properties.id}
+            longitude={station.geometry.coordinates[0]}
+            latitude={station.geometry.coordinates[1]}
+            anchor="center"
+          >
+            <StationMarker 
+              intensity={station.properties.intensity} 
+              color={station.properties.color} 
+              alert={station.properties.alert}
+            />
+          </Marker>
+        ))}
       </Map>
       {dataTime > 0 && (
         <div className="absolute bottom-3 right-3 z-50 flex flex-col gap-2 items-end">
