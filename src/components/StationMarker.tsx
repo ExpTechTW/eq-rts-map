@@ -18,6 +18,7 @@ const StationMarker: React.FC<StationMarkerProps> = ({ intensity, color, alert }
           backgroundColor: color,
           borderRadius: '50%',
           border: '1px solid #ffffff',
+          zIndex: 1,
         }}
       />
     );
@@ -76,6 +77,7 @@ const StationMarker: React.FC<StationMarkerProps> = ({ intensity, color, alert }
         borderRadius: '50%',
         border: `1px solid ${textColor}`,
         fontSize: '12px',
+        zIndex: Math.floor(intensity) + 10,
       }}
     >
       {text}

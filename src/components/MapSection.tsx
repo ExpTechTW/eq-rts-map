@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useRef, useState, useEffect, useCallback } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import Map, { Marker } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { fetchAndProcessStationData, type StationGeoJSON, type StationFeature } from '@/lib/rts';
@@ -105,14 +105,17 @@ const MapSection = React.memo(() => {
         setDataTime(data.time);
 
         let max = -3;
-        data.geojson.features.forEach(feature => {
-          if (feature.properties.intensity > max) {
-            max = feature.properties.intensity;
-          }
-        });
+        if (data.geojson && data.geojson.features) {
+          data.geojson.features.forEach(feature => {
+            if (feature.properties.intensity > max) {
+              max = feature.properties.intensity;
+            }
+          });
+        }
         setMaxIntensity(max);
 
       } catch (error) {
+        console.error("Failed to fetch station data:", error);
       }
     };
 
@@ -122,9 +125,22 @@ const MapSection = React.memo(() => {
     return () => clearInterval(interval);
   }, []);
 
-  const sortedFeatures = useMemo(() => {
-    if (!stationData) return [];
-    return [...stationData.features].sort((a, b) => a.properties.intensity - b.properties.intensity);
+  const stationMarkers = useMemo(() => {
+    if (!stationData) return null;
+    return stationData.features.map((station: StationFeature) => (
+      <Marker
+        key={station.properties.id}
+        longitude={station.geometry.coordinates[0]}
+        latitude={station.geometry.coordinates[1]}
+        anchor="center"
+      >
+        <StationMarker 
+          intensity={station.properties.intensity} 
+          color={station.properties.color} 
+          alert={station.properties.alert}
+        />
+      </Marker>
+    ));
   }, [stationData]);
 
   return (
@@ -147,20 +163,7 @@ const MapSection = React.memo(() => {
         boxZoom={false}
         onError={() => {}}
       >
-        {sortedFeatures.map((station: StationFeature) => (
-          <Marker
-            key={station.properties.id}
-            longitude={station.geometry.coordinates[0]}
-            latitude={station.geometry.coordinates[1]}
-            anchor="center"
-          >
-            <StationMarker 
-              intensity={station.properties.intensity} 
-              color={station.properties.color} 
-              alert={station.properties.alert}
-            />
-          </Marker>
-        ))}
+        {stationMarkers}
       </Map>
       {dataTime > 0 && (
         <div className="absolute bottom-3 right-3 z-50 flex flex-col gap-2 items-end">
