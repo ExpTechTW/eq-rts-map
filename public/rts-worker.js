@@ -1,13 +1,15 @@
-// RTS Data Worker - 專注於 HTTP 請求和 timeout
-async function fetchRTSData(replayTime) {
+let latestDataTime = 0;
+let REPLAY_TIME = 1759881140;
+
+async function fetchRTSData() {
   let url;
-  if (replayTime === 0) {
+  if (REPLAY_TIME === 0) {
     url = 'https://lb.exptech.dev/api/v1/trem/rts';
   } else {
-    url = `https://api-1.exptech.dev/api/v2/trem/rts/${replayTime}`;
+    url = `https://api-1.exptech.dev/api/v2/trem/rts/${REPLAY_TIME}`;
+    REPLAY_TIME += 1;
   }
 
-  // 設置 3 秒 timeout
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 3000);
 
@@ -18,8 +20,16 @@ async function fetchRTSData(replayTime) {
     clearTimeout(timeoutId);
     
     const data = await response.json();
+    const responseTime = data.time || Date.now();
+
+    if (responseTime <= latestDataTime) {
+      throw new Error('Data is older than existing data');
+    }
+
+    latestDataTime = responseTime;
+
     return {
-      time: data.time || Date.now(),
+      time: responseTime,
       station: data.station || {},
       int: data.int || [],
       box: data.box || {},
@@ -30,7 +40,6 @@ async function fetchRTSData(replayTime) {
   }
 }
 
-// 處理站點資訊請求
 async function fetchStationInfo() {
   const response = await fetch('https://api-1.exptech.dev/api/v1/trem/station');
   const data = await response.json();
@@ -43,30 +52,44 @@ async function fetchStationInfo() {
   return stationMap;
 }
 
-// 監聽主線程消息
+async function fetchAndProcessStationData() {
+  try {
+    const [stationMap, rtsResponse] = await Promise.all([
+      fetchStationInfo(),
+      fetchRTSData(),
+    ]);
+
+    const stationMapObj = {};
+    for (const [key, value] of stationMap) {
+      stationMapObj[key] = value;
+    }
+
+    return {
+      stationMap: stationMapObj,
+      rtsResponse,
+    };
+  } catch (error) {
+    throw error;
+  }
+}
+
 self.onmessage = async function(e) {
   const { type, data } = e.data;
 
   try {
     switch (type) {
-      case 'FETCH_RTS_DATA':
-        const rtsData = await fetchRTSData(data.replayTime);
+      case 'FETCH_DATA':
+        const result = await fetchAndProcessStationData();
         self.postMessage({
-          type: 'RTS_DATA_SUCCESS',
-          data: rtsData,
+          type: 'DATA_SUCCESS',
+          data: result,
         });
         break;
       
-      case 'FETCH_STATION_INFO':
-        const stationMap = await fetchStationInfo();
-        // 將 Map 轉換為普通物件以便傳送
-        const stationMapObj = {};
-        for (const [key, value] of stationMap) {
-          stationMapObj[key] = value;
-        }
+      case 'SET_REPLAY_TIME':
+        REPLAY_TIME = data.replayTime;
         self.postMessage({
-          type: 'STATION_INFO_SUCCESS',
-          data: stationMapObj,
+          type: 'REPLAY_TIME_SET',
         });
         break;
       
@@ -78,7 +101,7 @@ self.onmessage = async function(e) {
     }
   } catch (error) {
     self.postMessage({
-      type: 'ERROR',
+      type: 'DATA_ERROR',
       error: error.message,
     });
   }
