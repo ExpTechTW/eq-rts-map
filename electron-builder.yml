@@ -34,7 +34,7 @@ nsis:
   perMachine: false
   allowToChangeInstallationDirectory: false
   deleteAppDataOnUninstall: false
-  allowElevation: true
+  allowElevation: false
   createStartMenuShortcut: true
 
 mac:
