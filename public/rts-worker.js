@@ -1,13 +1,11 @@
 let latestDataTime = 0;
-let REPLAY_TIME = 1759881140;
 
-async function fetchRTSData() {
+async function fetchRTSData(replayTime) {
   let url;
-  if (REPLAY_TIME === 0) {
+  if (replayTime === 0) {
     url = 'https://lb.exptech.dev/api/v1/trem/rts';
   } else {
-    url = `https://api-1.exptech.dev/api/v2/trem/rts/${REPLAY_TIME}`;
-    REPLAY_TIME += 1;
+    url = `https://api-1.exptech.dev/api/v2/trem/rts/${replayTime}`;
   }
 
   const controller = new AbortController();
@@ -40,56 +38,16 @@ async function fetchRTSData() {
   }
 }
 
-async function fetchStationInfo() {
-  const response = await fetch('https://api-1.exptech.dev/api/v1/trem/station');
-  const data = await response.json();
-  const stationMap = new Map();
-
-  for (const [uuid, station] of Object.entries(data)) {
-    stationMap.set(uuid, station);
-  }
-
-  return stationMap;
-}
-
-async function fetchAndProcessStationData() {
-  try {
-    const [stationMap, rtsResponse] = await Promise.all([
-      fetchStationInfo(),
-      fetchRTSData(),
-    ]);
-
-    const stationMapObj = {};
-    for (const [key, value] of stationMap) {
-      stationMapObj[key] = value;
-    }
-
-    return {
-      stationMap: stationMapObj,
-      rtsResponse,
-    };
-  } catch (error) {
-    throw error;
-  }
-}
-
 self.onmessage = async function(e) {
   const { type, data } = e.data;
 
   try {
     switch (type) {
-      case 'FETCH_DATA':
-        const result = await fetchAndProcessStationData();
+      case 'FETCH_RTS_DATA':
+        const rtsResponse = await fetchRTSData(data.replayTime);
         self.postMessage({
-          type: 'DATA_SUCCESS',
-          data: result,
-        });
-        break;
-      
-      case 'SET_REPLAY_TIME':
-        REPLAY_TIME = data.replayTime;
-        self.postMessage({
-          type: 'REPLAY_TIME_SET',
+          type: 'RTS_DATA_SUCCESS',
+          data: rtsResponse,
         });
         break;
       

@@ -10,10 +10,9 @@ export class RTSWorkerManager {
   private worker: Worker | null = null;
   private messageHandlers: Map<string, (data: any) => void> = new Map();
   private errorHandlers: Map<string, (error: string) => void> = new Map();
-  
-  private latestDataTime = 0;
-  private replayTime = 1759881140;
+  private replayTime = 0;
   private stationMapCache: Map<string, StationInfo> | null = null;
+  private stationMapLastFetch = 0;
 
   constructor() {
     this.initWorker();
@@ -62,38 +61,75 @@ export class RTSWorkerManager {
     }
   }
 
-  async fetchAndProcessStationData(): Promise<ProcessedStationData> {
+  async fetchRTSData(): Promise<RTSResponse> {
     return new Promise((resolve, reject) => {
       const successHandler = (data: any) => {
-        this.messageHandlers.delete('DATA_SUCCESS');
+        this.messageHandlers.delete('RTS_DATA_SUCCESS');
         this.errorHandlers.delete('DATA_ERROR');
         
-        const stationMap = new Map<string, StationInfo>();
-        for (const [key, value] of Object.entries(data.stationMap)) {
-          stationMap.set(key, value as StationInfo);
-        }
-
-        const geojson = createStationGeoJSON(stationMap, data.rtsResponse.station);
-
         resolve({
-          geojson,
-          time: data.rtsResponse.time,
-          int: data.rtsResponse.int,
-          box: data.rtsResponse.box,
+          time: data.time,
+          station: data.station,
+          int: data.int,
+          box: data.box,
         });
       };
 
       const errorHandler = (error: string) => {
-        this.messageHandlers.delete('DATA_SUCCESS');
+        this.messageHandlers.delete('RTS_DATA_SUCCESS');
         this.errorHandlers.delete('DATA_ERROR');
         reject(new Error(error));
       };
 
-      this.onMessage('DATA_SUCCESS', successHandler);
+      this.onMessage('RTS_DATA_SUCCESS', successHandler);
       this.onError('DATA_ERROR', errorHandler);
 
-      this.postMessage('FETCH_DATA');
+      this.postMessage('FETCH_RTS_DATA', { replayTime: this.replayTime });
+      
+      if (this.replayTime !== 0) {
+        this.replayTime += 1;
+      }
     });
+  }
+
+  async fetchAndProcessStationData(): Promise<ProcessedStationData> {
+    const [stationMap, rtsResponse] = await Promise.all([
+      this.fetchStationInfo(),
+      this.fetchRTSData(),
+    ]);
+
+    const geojson = createStationGeoJSON(stationMap, rtsResponse.station);
+
+    return {
+      geojson,
+      time: rtsResponse.time,
+      int: rtsResponse.int,
+      box: rtsResponse.box,
+    };
+  }
+
+  async fetchStationInfo(): Promise<Map<string, StationInfo>> {
+    const now = Date.now();
+    const shouldRefresh = !this.stationMapCache || (now - this.stationMapLastFetch) > 600000; // 600秒 = 10分鐘
+
+    if (shouldRefresh) {
+      const response = await fetch('https://api-1.exptech.dev/api/v1/trem/station');
+      const data = await response.json();
+      const stationMap = new Map<string, StationInfo>();
+
+      for (const [uuid, station] of Object.entries(data)) {
+        stationMap.set(uuid, station as StationInfo);
+      }
+
+      this.stationMapCache = stationMap;
+      this.stationMapLastFetch = now;
+    }
+
+    return this.stationMapCache!;
+  }
+
+  setReplayTime(replayTime: number) {
+    this.replayTime = replayTime;
   }
 
   destroy() {

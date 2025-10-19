@@ -29,8 +29,8 @@ export function RTSProvider({ children }: { children: React.ReactNode }) {
         setData(newData);
         setError(null);
       } catch (err) {
-        if (!err.message.includes('Data is older than existing data')) {
-          setError(err instanceof Error ? err : new Error('Unknown error'));
+        if (err instanceof Error && !err.message.includes('Data is older than existing data')) {
+          setError(err);
         }
       } finally {
         setIsLoading(false);
