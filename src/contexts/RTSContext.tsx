@@ -1,7 +1,8 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { fetchAndProcessStationData, type ProcessedStationData } from '@/lib/rts';
+import { RTSWorkerManager } from '@/lib/rts-worker';
+import { type ProcessedStationData } from '@/lib/rts';
 
 interface RTSContextType {
   data: ProcessedStationData | null;
@@ -15,29 +16,43 @@ export function RTSProvider({ children }: { children: React.ReactNode }) {
   const [data, setData] = useState<ProcessedStationData | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<Error | null>(null);
-  const isFetchingRef = useRef<boolean>(false);
-
-  const fetchData = async () => {
-    if (isFetchingRef.current) return;
-
-    isFetchingRef.current = true;
-    try {
-      const newData = await fetchAndProcessStationData();
-      setData(newData);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err : new Error('Unknown error'));
-    } finally {
-      setIsLoading(false);
-      isFetchingRef.current = false;
-    }
-  };
+  const workerManagerRef = useRef<RTSWorkerManager | null>(null);
 
   useEffect(() => {
+    // 初始化 Worker
+    workerManagerRef.current = new RTSWorkerManager();
+
+    const fetchData = async () => {
+      if (!workerManagerRef.current) return;
+
+      try {
+        const newData = await workerManagerRef.current.fetchAndProcessStationData();
+        setData(newData);
+        setError(null);
+      } catch (err) {
+        // 只記錄非時間相關的錯誤
+        if (!err.message.includes('Data is older than existing data')) {
+          setError(err instanceof Error ? err : new Error('Unknown error'));
+        }
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    // 立即執行一次
     fetchData();
+    
+    // 每 1 秒發起一個新請求（多線程）
     const interval = setInterval(fetchData, 1000);
 
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      // 清理 Worker
+      if (workerManagerRef.current) {
+        workerManagerRef.current.destroy();
+        workerManagerRef.current = null;
+      }
+    };
   }, []);
 
   return (
