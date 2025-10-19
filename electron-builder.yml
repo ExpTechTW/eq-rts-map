@@ -30,12 +30,9 @@ win:
   verifyUpdateCodeSignature: false
 
 nsis:
-  oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: false
   deleteAppDataOnUninstall: false
-  allowElevation: false
-  createStartMenuShortcut: true
 
 mac:
   category: public.app-category.productivity
