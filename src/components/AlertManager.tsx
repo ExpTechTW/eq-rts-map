@@ -6,6 +6,7 @@ import { useRTS } from '@/contexts/RTSContext';
 const AlertManager = React.memo(() => {
   const { data } = useRTS();
   const [hasAlert, setHasAlert] = useState<boolean>(false);
+  const [previousHasAlert, setPreviousHasAlert] = useState<boolean>(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
@@ -14,13 +15,15 @@ const AlertManager = React.memo(() => {
 
   useEffect(() => {
     if (!data) {
+      setPreviousHasAlert(hasAlert);
       setHasAlert(false);
       return;
     }
 
     const shouldAlert = data.box && Object.keys(data.box).length > 0;
+    setPreviousHasAlert(hasAlert);
     setHasAlert(shouldAlert);
-  }, [data]);
+  }, [data, hasAlert]);
 
   useEffect(() => {
     if (!hasAlert) {
@@ -31,12 +34,20 @@ const AlertManager = React.memo(() => {
       return;
     }
 
-    const playAlarm = () => {
+    const isFirstAlert = !previousHasAlert && hasAlert;
+    
+    const playAlarmAndFocus = () => {
       audioRef.current?.play().catch(() => {});
+      
+      if (isFirstAlert && window.electronAPI) {
+        (window.electronAPI as any).showWindow().catch(() => {});
+      }
     };
 
-    playAlarm();
-    const interval = setInterval(playAlarm, 3000);
+    playAlarmAndFocus();
+    const interval = setInterval(() => {
+      audioRef.current?.play().catch(() => {});
+    }, 3000);
 
     return () => {
       clearInterval(interval);
@@ -45,7 +56,7 @@ const AlertManager = React.memo(() => {
         audioRef.current.currentTime = 0;
       }
     };
-  }, [hasAlert]);
+  }, [hasAlert, previousHasAlert]);
 
   return null;
 });
