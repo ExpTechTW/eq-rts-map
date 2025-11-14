@@ -13,6 +13,7 @@ export class RTSWorkerManager {
   private replayTime = 0;
   private stationMapCache: Map<string, StationInfo> | null = null;
   private stationMapLastFetch = 0;
+  private pendingRequests = new Map<string, AbortController>();
 
   constructor() {
     this.initWorker();
@@ -55,18 +56,39 @@ export class RTSWorkerManager {
     this.errorHandlers.set(type, handler);
   }
 
+  offMessage(type: string) {
+    this.messageHandlers.delete(type);
+  }
+
+  offError(type: string) {
+    this.errorHandlers.delete(type);
+  }
+
   postMessage(type: string, data?: any) {
     if (this.worker) {
       this.worker.postMessage({ type, data });
     }
   }
 
-  async fetchRTSData(): Promise<RTSResponse> {
+  async fetchRTSData(timeout = 10000): Promise<RTSResponse> {
     return new Promise((resolve, reject) => {
-      const successHandler = (data: any) => {
+      const requestId = `rts-${Date.now()}`;
+      const abortController = new AbortController();
+
+      const timeoutId = setTimeout(() => {
+        cleanup();
+        reject(new Error('Request timeout'));
+      }, timeout);
+
+      const cleanup = () => {
+        clearTimeout(timeoutId);
         this.messageHandlers.delete('RTS_DATA_SUCCESS');
         this.errorHandlers.delete('DATA_ERROR');
-        
+        this.pendingRequests.delete(requestId);
+      };
+
+      const successHandler = (data: any) => {
+        cleanup();
         resolve({
           time: data.time,
           station: data.station,
@@ -76,16 +98,22 @@ export class RTSWorkerManager {
       };
 
       const errorHandler = (error: string) => {
-        this.messageHandlers.delete('RTS_DATA_SUCCESS');
-        this.errorHandlers.delete('DATA_ERROR');
+        cleanup();
         reject(new Error(error));
       };
 
+      if (abortController.signal.aborted) {
+        cleanup();
+        reject(new Error('Request aborted'));
+        return;
+      }
+
       this.onMessage('RTS_DATA_SUCCESS', successHandler);
       this.onError('DATA_ERROR', errorHandler);
+      this.pendingRequests.set(requestId, abortController);
 
       this.postMessage('FETCH_RTS_DATA', { replayTime: this.replayTime });
-      
+
       if (this.replayTime !== 0) {
         this.replayTime += 1;
       }
@@ -115,6 +143,11 @@ export class RTSWorkerManager {
     if (shouldRefresh) {
       const response = await fetch('https://api-1.exptech.dev/api/v1/trem/station');
       const data = await response.json();
+
+      if (this.stationMapCache) {
+        this.stationMapCache.clear();
+      }
+
       const stationMap = new Map<string, StationInfo>();
 
       for (const [uuid, station] of Object.entries(data)) {
@@ -132,12 +165,25 @@ export class RTSWorkerManager {
     this.replayTime = replayTime;
   }
 
+  abortPendingRequests() {
+    this.pendingRequests.forEach((controller) => controller.abort());
+    this.pendingRequests.clear();
+  }
+
   destroy() {
+    this.abortPendingRequests();
+
     if (this.worker) {
       this.worker.terminate();
       this.worker = null;
     }
+
     this.messageHandlers.clear();
     this.errorHandlers.clear();
+
+    if (this.stationMapCache) {
+      this.stationMapCache.clear();
+      this.stationMapCache = null;
+    }
   }
 }
