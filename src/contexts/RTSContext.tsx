@@ -17,23 +17,31 @@ export function RTSProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<Error | null>(null);
   const workerManagerRef = useRef<RTSWorkerManager | null>(null);
+  const isMountedRef = useRef<boolean>(true);
 
   useEffect(() => {
+    isMountedRef.current = true;
     workerManagerRef.current = new RTSWorkerManager();
 
     const fetchData = async () => {
-      if (!workerManagerRef.current) return;
+      if (!workerManagerRef.current || !isMountedRef.current) return;
 
       try {
         const newData = await workerManagerRef.current.fetchAndProcessStationData();
-        setData(newData);
-        setError(null);
+        // 檢查組件是否仍然掛載，避免在卸載後執行 setState
+        if (isMountedRef.current) {
+          setData(newData);
+          setError(null);
+        }
       } catch (err) {
+        if (!isMountedRef.current) return;
         if (err instanceof Error && !err.message.includes('Data is older than existing data')) {
           setError(err);
         }
       } finally {
-        setIsLoading(false);
+        if (isMountedRef.current) {
+          setIsLoading(false);
+        }
       }
     };
 
@@ -42,6 +50,7 @@ export function RTSProvider({ children }: { children: React.ReactNode }) {
     const interval = setInterval(fetchData, 1000);
 
     return () => {
+      isMountedRef.current = false;
       clearInterval(interval);
       if (workerManagerRef.current) {
         workerManagerRef.current.destroy();

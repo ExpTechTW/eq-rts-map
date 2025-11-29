@@ -131,6 +131,9 @@ export class ChartWorkerManager {
 
   destroy() {
     if (this.worker) {
+      // 移除所有事件監聽器以防止記憶體洩漏
+      this.worker.onmessage = null;
+      this.worker.onerror = null;
       this.worker.terminate();
       this.worker = null;
     }

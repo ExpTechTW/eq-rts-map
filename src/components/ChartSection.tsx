@@ -51,13 +51,16 @@ const ChartSection = React.memo(() => {
   const stationConfigsRef = useRef<Record<number, { sampleRate: number; dataLength: number; scale: number }>>({});
   const chartWorkerRef = useRef<ChartWorkerManager | null>(null);
   const chartRef = useRef<any>(null);
-
+  const isMountedRef = useRef<boolean>(true);
 
   useEffect(() => {
+    isMountedRef.current = true;
     chartWorkerRef.current = new ChartWorkerManager();
     
     chartWorkerRef.current.generateChannelConfigs().then(configs => {
-      setChannelConfigs(configs);
+      if (isMountedRef.current) {
+        setChannelConfigs(configs);
+      }
     });
 
     STATION_IDS.forEach((id) => {
@@ -72,6 +75,8 @@ const ChartSection = React.memo(() => {
     });
 
     ws.onWaveform((data: WaveformData) => {
+      if (!isMountedRef.current) return;
+      
       if (!stationConfigsRef.current[data.id]) {
         const config = {
           sampleRate: data.sampleRate,
@@ -79,7 +84,9 @@ const ChartSection = React.memo(() => {
           scale: data.precision === 2 ? 20 : 15000,
         };
         stationConfigsRef.current[data.id] = config;
-        setStationConfigs(prev => ({ ...prev, [data.id]: config }));
+        if (isMountedRef.current) {
+          setStationConfigs(prev => ({ ...prev, [data.id]: config }));
+        }
       }
 
       if (!waveformBuffersRef.current[data.id]) {
@@ -92,6 +99,8 @@ const ChartSection = React.memo(() => {
     wsRef.current = ws;
 
     const updateInterval = setInterval(async () => {
+      if (!isMountedRef.current) return;
+      
       let hasAnyUpdate = false;
 
       STATION_IDS.forEach((stationId: number) => {
@@ -101,8 +110,10 @@ const ChartSection = React.memo(() => {
         }
       });
 
-      if (hasAnyUpdate && chartWorkerRef.current) {
+      if (hasAnyUpdate && chartWorkerRef.current && isMountedRef.current) {
         setWaveformData(prev => {
+          if (!isMountedRef.current) return prev;
+          
           const newData: Record<number, (number | null)[]> = {};
 
           STATION_IDS.forEach((stationId: number) => {
@@ -130,11 +141,17 @@ const ChartSection = React.memo(() => {
             }
           });
 
-          chartWorkerRef.current?.processChartData(newData, stationConfigsRef.current).then(processedData => {
-            setChartData(processedData);
-          }).catch(error => {
-            console.error('Chart processing error:', error);
-          });
+          if (isMountedRef.current && chartWorkerRef.current) {
+            chartWorkerRef.current.processChartData(newData, stationConfigsRef.current).then(processedData => {
+              if (isMountedRef.current) {
+                setChartData(processedData);
+              }
+            }).catch(error => {
+              if (isMountedRef.current) {
+                console.error('Chart processing error:', error);
+              }
+            });
+          }
 
           return newData;
         });
@@ -142,10 +159,12 @@ const ChartSection = React.memo(() => {
     }, 1000);
 
     return () => {
+      isMountedRef.current = false;
       ws.disconnect();
       clearInterval(updateInterval);
       if (chartWorkerRef.current) {
         chartWorkerRef.current.destroy();
+        chartWorkerRef.current = null;
       }
     };
   }, []);
