@@ -62,6 +62,7 @@ const MapSection = React.memo(() => {
   const isMapReadyRef = useRef<boolean>(false);
   const updateMapDataRef = useRef<any>(null);
   const [boxVisible, setBoxVisible] = useState<boolean>(true);
+  const isMountedRef = useRef<boolean>(true);
 
   const createBoxGeoJSON = useCallback(() => {
     if (!rtsData?.box) return null;
@@ -305,21 +306,36 @@ const MapSection = React.memo(() => {
       }];
     }
 
+    // 限制排列數量以防止記憶體洩漏（最多處理 4 個站點，4! = 24 種排列）
+    const MAX_STATIONS = 4;
+    const stationsToProcess = selectedStations.slice(0, MAX_STATIONS);
+    
     const generatePermutations = (arr: any[]): any[][] => {
       if (arr.length <= 1) return [arr];
+      // 如果排列數量過大，使用貪心算法而非生成所有排列
+      if (arr.length > 4) {
+        // 對於超過 4 個的情況，只返回一個簡單的排列
+        return [arr];
+      }
+      
+      // 限制最大排列數量以防止記憶體洩漏
+      const MAX_PERMUTATIONS = 24; // 4! = 24
       const result: any[][] = [];
-      for (let i = 0; i < arr.length; i++) {
+      
+      for (let i = 0; i < arr.length && result.length < MAX_PERMUTATIONS; i++) {
         const current = arr[i];
         const remaining = arr.slice(0, i).concat(arr.slice(i + 1));
         const remainingPerms = generatePermutations(remaining);
         for (const perm of remainingPerms) {
+          if (result.length >= MAX_PERMUTATIONS) break;
           result.push([current].concat(perm));
         }
+        if (result.length >= MAX_PERMUTATIONS) break;
       }
       return result;
     };
 
-    const cornersToUse = CORNER_TOOLTIP_POSITIONS.slice(0, selectedStations.length);
+    const cornersToUse = CORNER_TOOLTIP_POSITIONS.slice(0, stationsToProcess.length);
     const allCornerPermutations = generatePermutations(cornersToUse);
 
     interface Assignment {
@@ -331,7 +347,7 @@ const MapSection = React.memo(() => {
     const assignments: Assignment[] = [];
 
     for (const cornerPerm of allCornerPermutations) {
-      const combination = selectedStations.map((station, index) => ({
+      const combination = stationsToProcess.map((station, index) => ({
         station,
         corner: cornerPerm[index]
       }));
@@ -535,12 +551,14 @@ const MapSection = React.memo(() => {
   }, [updateMapData]);
 
   useEffect(() => {
-    if (!rtsData) return;
+    if (!isMountedRef.current || !rtsData) return;
 
     const data = rtsData;
 
-    setStationData(data.geojson);
-    setDataTime(data.time);
+    if (isMountedRef.current) {
+      setStationData(data.geojson);
+      setDataTime(data.time);
+    }
 
     let max = -3;
     data.geojson.features.forEach((feature) => {
@@ -548,7 +566,10 @@ const MapSection = React.memo(() => {
         max = feature.properties.intensity;
       }
     });
-    setMaxIntensity(max);
+    
+    if (isMountedRef.current) {
+      setMaxIntensity(max);
+    }
 
     const alertStations: AlertTooltip[] = [];
     data.geojson.features.forEach((feature) => {
@@ -566,20 +587,28 @@ const MapSection = React.memo(() => {
       }
     });
 
-    setAllAlertStations(alertStations);
+    if (isMountedRef.current) {
+      setAllAlertStations(alertStations);
+    }
   }, [rtsData]);
 
   useEffect(() => {
+    if (!isMountedRef.current) return;
+    
     if (allAlertStations.length === 0) {
       setAlertTooltips([]);
       return;
     }
 
     const positionedTooltips = assignTooltipPositions(allAlertStations);
-    setAlertTooltips(positionedTooltips);
+    if (isMountedRef.current) {
+      setAlertTooltips(positionedTooltips);
+    }
   }, [tooltipSwitchIndex]); 
 
   useEffect(() => {
+    if (!isMountedRef.current) return;
+    
     if (allAlertStations.length === 0) {
       setCurrentTooltipData([]);
       return;
@@ -587,7 +616,9 @@ const MapSection = React.memo(() => {
 
     const currentPositions = alertTooltips.length > 0 ? alertTooltips : assignTooltipPositions(allAlertStations);
     const updatedTooltips = updateTooltipData(currentPositions, allAlertStations);
-    setCurrentTooltipData(updatedTooltips);
+    if (isMountedRef.current) {
+      setCurrentTooltipData(updatedTooltips);
+    }
   }, [allAlertStations, alertTooltips]);
 
   useEffect(() => {
@@ -616,7 +647,10 @@ const MapSection = React.memo(() => {
   }, [isMapReady, stationData, initializeMapSource]);
 
   useEffect(() => {
+    isMountedRef.current = true;
+    
     const interval = setInterval(() => {
+      if (!isMountedRef.current) return;
       setTooltipSwitchIndex(prev => {
         const newValue = prev + 1;
         tooltipSwitchIndexRef.current = newValue;
@@ -624,15 +658,20 @@ const MapSection = React.memo(() => {
       });
     }, 3000);
 
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+    };
   }, []);
 
   useEffect(() => {
     const interval = setInterval(() => {
+      if (!isMountedRef.current) return;
       setBoxVisible(prev => !prev);
     }, 1000);
 
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+    };
   }, []);
 
   useEffect(() => {
@@ -647,10 +686,55 @@ const MapSection = React.memo(() => {
   }, [boxVisible]);
 
   useEffect(() => {
+    if (!isMountedRef.current) return;
+    
     if (rtsData && isMapReadyRef.current && sourceInitializedRef.current) {
       updateBoxData();
     }
   }, [rtsData, updateBoxData]);
+
+  // 清理 Map 實例和所有資源
+  useEffect(() => {
+    isMountedRef.current = true;
+    
+    return () => {
+      isMountedRef.current = false;
+      
+      // 清理 Map 實例
+      if (mapRef.current) {
+        const map = mapRef.current.getMap();
+        if (map) {
+          // 移除所有事件監聽器
+          map.off();
+          // 移除所有圖層和資源
+          try {
+            const sources = ['stations', 'tooltip-lines', 'boxes'];
+            const layers = ['station-circles', 'tooltip-lines', 'box-outlines'];
+            
+            layers.forEach(layerId => {
+              if (map.getLayer(layerId)) {
+                map.removeLayer(layerId);
+              }
+            });
+            
+            sources.forEach(sourceId => {
+              if (map.getSource(sourceId)) {
+                map.removeSource(sourceId);
+              }
+            });
+          } catch (error) {
+            // 忽略清理錯誤
+          }
+        }
+        mapRef.current = null;
+      }
+      
+      // 清理所有 refs
+      sourceInitializedRef.current = false;
+      isMapReadyRef.current = false;
+      updateMapDataRef.current = null;
+    };
+  }, []);
 
   return (
     <div className="w-1/2 h-full relative">

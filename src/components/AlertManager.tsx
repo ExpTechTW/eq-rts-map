@@ -8,12 +8,26 @@ const AlertManager = React.memo(() => {
   const [hasAlert, setHasAlert] = useState<boolean>(false);
   const [previousHasAlert, setPreviousHasAlert] = useState<boolean>(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const isMountedRef = useRef<boolean>(true);
 
   useEffect(() => {
+    isMountedRef.current = true;
     audioRef.current = new Audio('/audios/alarm.wav');
+
+    return () => {
+      isMountedRef.current = false;
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = '';
+        audioRef.current.load();
+        audioRef.current = null;
+      }
+    };
   }, []);
 
   useEffect(() => {
+    if (!isMountedRef.current) return;
+    
     if (!data) {
       setPreviousHasAlert(hasAlert);
       setHasAlert(false);
@@ -26,6 +40,8 @@ const AlertManager = React.memo(() => {
   }, [data, hasAlert]);
 
   useEffect(() => {
+    if (!isMountedRef.current) return;
+    
     if (!hasAlert) {
       audioRef.current?.pause();
       if (audioRef.current) {
@@ -37,7 +53,8 @@ const AlertManager = React.memo(() => {
     const isFirstAlert = !previousHasAlert && hasAlert;
     
     const playAlarmAndFocus = () => {
-      audioRef.current?.play().catch(() => {});
+      if (!isMountedRef.current || !audioRef.current) return;
+      audioRef.current.play().catch(() => {});
       
       if (isFirstAlert && window.electronAPI) {
         (window.electronAPI as any).showWindow().catch(() => {});
@@ -46,13 +63,14 @@ const AlertManager = React.memo(() => {
 
     playAlarmAndFocus();
     const interval = setInterval(() => {
-      audioRef.current?.play().catch(() => {});
+      if (!isMountedRef.current || !audioRef.current) return;
+      audioRef.current.play().catch(() => {});
     }, 3000);
 
     return () => {
       clearInterval(interval);
-      audioRef.current?.pause();
       if (audioRef.current) {
+        audioRef.current.pause();
         audioRef.current.currentTime = 0;
       }
     };

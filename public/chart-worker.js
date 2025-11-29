@@ -12,6 +12,200 @@ const TOP_GAP = BASE_GAP - TOP_BOTTOM_GAP_REDUCTION;
 const MIDDLE_GAP_EXTRA = (TOP_BOTTOM_GAP_REDUCTION * 2) / 4;
 const MIDDLE_GAP = BASE_GAP + MIDDLE_GAP_EXTRA;
 
+// 帶通濾波器實現（參考 accel_bpf/main.go）
+class SOSStage {
+  constructor(b0, b1, b2, a1, a2) {
+    this.b0 = b0;
+    this.b1 = b1;
+    this.b2 = b2;
+    this.a1 = a1;
+    this.a2 = a2;
+    this.z1 = 0;
+    this.z2 = 0;
+  }
+}
+
+class BPFFilter {
+  constructor(num, den) {
+    if (num.length !== den.length) {
+      throw new Error('num/den length mismatch');
+    }
+
+    this.stages = num.map((numCoeffs, i) => {
+      const [b0, b1, b2] = numCoeffs;
+      const [a0, a1, a2] = den[i];
+
+      // 正規化係數（如果 a0 !== 1.0）
+      if (a0 !== 1.0) {
+        return new SOSStage(b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0);
+      }
+
+      return new SOSStage(b0, b1, b2, a1, a2);
+    });
+  }
+
+  apply(x) {
+    let y = x;
+    for (let i = 0; i < this.stages.length; i++) {
+      const stage = this.stages[i];
+      const out = stage.b0 * y + stage.z1;
+      stage.z1 = stage.b1 * y - stage.a1 * out + stage.z2;
+      stage.z2 = stage.b2 * y - stage.a2 * out;
+      y = out;
+    }
+    return y;
+  }
+
+  applyBuffer(x) {
+    return x.map((val) => this.apply(val));
+  }
+
+  reset() {
+    for (const stage of this.stages) {
+      stage.z1 = 0;
+      stage.z2 = 0;
+    }
+  }
+}
+
+// 濾波器係數（從 accel_bpf/main.go）
+const NUM_LPF = [
+  [0.8063260828207, 0, 0],
+  [1, -0.3349099821478, 1],
+  [0.8764452158503, 0, 0],
+  [1, -0.08269016387548, 1],
+  [0.8131516681065, 0, 0],
+  [1, 0.5521204464881, 1],
+  [1.228277124762, 0, 0],
+  [1, 1.705652561121, 1],
+  [0.00431639855615, 0, 0],
+  [1, -0.4218227257396, 1],
+  [1, 0, 0],
+];
+
+const DEN_LPF = [
+  [1, 0, 0],
+  [1, -0.6719798550872, 0.938845023254],
+  [1, 0, 0],
+  [1, -0.8264759910073, 0.8561761588872],
+  [1, 0, 0],
+  [1, -1.10962299915, 0.7141202529829],
+  [1, 0, 0],
+  [1, -1.413006561919, 0.5638384962434],
+  [1, 0, 0],
+  [1, -0.6139497794955, 0.9834048810788],
+  [1, 0, 0],
+];
+
+const NUM_HPF = [
+  [0.9769037485204, 0, 0],
+  [1, -2, 1],
+  [0.9424328308459, 0, 0],
+  [1, -2, 1],
+  [0.9149691441131, 0, 0],
+  [1, -2, 1],
+  [0.8959987277275, 0, 0],
+  [1, -2, 1],
+  [0.8863374802187, 0, 0],
+  [1, -2, 1],
+  [1, 0, 0],
+];
+
+const DEN_HPF = [
+  [1, 0, 0],
+  [1, -1.946073828052, 0.9615411660298],
+  [1, 0, 0],
+  [1, -1.877404882092, 0.8923264412918],
+  [1, 0, 0],
+  [1, -1.822694925196, 0.837181651256],
+  [1, 0, 0],
+  [1, -1.78490427193, 0.7990906389804],
+  [1, 0, 0],
+  [1, -1.765658260281, 0.7796916605933],
+  [1, 0, 0],
+];
+
+// 創建帶通濾波器實例（每個站點需要獨立的濾波器以保持狀態）
+// 限制緩存大小以防止記憶體洩漏（最多保留 10 個站點的濾波器）
+const MAX_FILTER_CACHE_SIZE = 10;
+const filterCache = new Map();
+const filterAccessOrder = []; // 用於 LRU 緩存淘汰
+
+function getBPFFilter(stationId) {
+  if (!filterCache.has(stationId)) {
+    // 如果緩存已滿，移除最久未使用的
+    if (filterCache.size >= MAX_FILTER_CACHE_SIZE) {
+      const oldestStationId = filterAccessOrder.shift();
+      if (oldestStationId !== undefined) {
+        filterCache.delete(oldestStationId);
+      }
+    }
+    
+    const hpf = new BPFFilter(NUM_HPF, DEN_HPF);
+    const lpf = new BPFFilter(NUM_LPF, DEN_LPF);
+    filterCache.set(stationId, { hpf, lpf });
+  }
+  
+  // 更新訪問順序（LRU）
+  const index = filterAccessOrder.indexOf(stationId);
+  if (index > -1) {
+    filterAccessOrder.splice(index, 1);
+  }
+  filterAccessOrder.push(stationId);
+  
+  return filterCache.get(stationId);
+}
+
+// 清理不再使用的濾波器（可以從外部調用）
+function clearUnusedFilters(activeStationIds) {
+  const activeSet = new Set(activeStationIds);
+  const toDelete = [];
+  
+  filterCache.forEach((_, stationId) => {
+    if (!activeSet.has(stationId)) {
+      toDelete.push(stationId);
+    }
+  });
+  
+  toDelete.forEach(stationId => {
+    filterCache.delete(stationId);
+    const index = filterAccessOrder.indexOf(stationId);
+    if (index > -1) {
+      filterAccessOrder.splice(index, 1);
+    }
+  });
+}
+
+// 應用帶通濾波（先高通，後低通，與 main.go 一致）
+function applyBPF(data, stationId) {
+  if (!data || data.length === 0) return data;
+  
+  // 獲取濾波器
+  const { hpf, lpf } = getBPFFilter(stationId);
+  
+  // 處理數據，保持濾波器狀態的連續性
+  // 對於 null 值，跳過濾波但保持狀態（使用前一個有效值或 0）
+  const result = [];
+  let lastValidValue = 0;
+  
+  for (let i = 0; i < data.length; i++) {
+    const value = data[i];
+    
+    if (value === null || value === undefined) {
+      // 保持 null 值，不進行濾波
+      result.push(null);
+    } else {
+      // 應用濾波器（先高通，後低通）
+      const hpfValue = hpf.apply(value);
+      const filteredValue = lpf.apply(hpfValue);
+      result.push(filteredValue);
+      lastValidValue = filteredValue;
+    }
+  }
+  
+  return result;
+}
+
 // 顏色生成函數
 function generateColorFromId(id) {
   let hash = 0;
@@ -99,7 +293,10 @@ function processWaveformData(waveformData, stationConfigs) {
       if (!stationConfig) {
         data = Array(CHART_LENGTH).fill(null);
       } else {
-        const stationWaveform = waveformData[stationId] || Array(stationConfig.dataLength).fill(null);
+        let stationWaveform = waveformData[stationId] || Array(stationConfig.dataLength).fill(null);
+        
+        // 在縮放之前應用帶通濾波器（與 main.go 一致）
+        stationWaveform = applyBPF(stationWaveform, stationId);
 
         if (stationConfig.sampleRate === 20) {
           data = [];
@@ -210,6 +407,10 @@ function generateChartDatasets(channelDataArrays, indexToOrder) {
 
 // 處理完整的圖表數據
 function processChartData(waveformData, stationConfigs) {
+  // 清理不再使用的濾波器
+  const activeStationIds = Object.keys(waveformData).map(id => parseInt(id));
+  clearUnusedFilters(activeStationIds);
+  
   const channelDataArrays = processWaveformData(waveformData, stationConfigs);
   const indexToOrder = calculateChannelMaxValues(channelDataArrays);
   const datasets = generateChartDatasets(channelDataArrays, indexToOrder);

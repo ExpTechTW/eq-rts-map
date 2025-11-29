@@ -45,6 +45,7 @@ const ChartSection = React.memo(() => {
   const [waveformData, setWaveformData] = useState<Record<number, (number | null)[]>>({});
   const [stationConfigs, setStationConfigs] = useState<Record<number, { sampleRate: number; dataLength: number; scale: number }>>({});
   const [chartData, setChartData] = useState<ChartData>({ labels: [], datasets: [] });
+  const prevChartDataRef = useRef<ChartData | null>(null);
   const [channelConfigs, setChannelConfigs] = useState<Array<{ baseline: number; color: string }>>([]);
   const wsRef = useRef<WaveformWebSocket | null>(null);
   const waveformBuffersRef = useRef<Record<number, number[]>>({});
@@ -92,7 +93,18 @@ const ChartSection = React.memo(() => {
       if (!waveformBuffersRef.current[data.id]) {
         waveformBuffersRef.current[data.id] = [];
       }
-      waveformBuffersRef.current[data.id].push(...data.X);
+      
+      // 限制緩衝區大小以防止記憶體洩漏（最多保留 10 秒的數據）
+      const config = stationConfigsRef.current[data.id];
+      const maxBufferSize = config ? config.sampleRate * 10 : 1000;
+      const buffer = waveformBuffersRef.current[data.id];
+      
+      buffer.push(...data.X);
+      
+      // 如果緩衝區過大，移除舊數據
+      if (buffer.length > maxBufferSize) {
+        buffer.splice(0, buffer.length - maxBufferSize);
+      }
     });
 
     ws.connect().catch(() => {});
@@ -119,7 +131,10 @@ const ChartSection = React.memo(() => {
           STATION_IDS.forEach((stationId: number) => {
             const config = stationConfigsRef.current[stationId];
             if (!config) {
-              newData[stationId] = prev[stationId] || [];
+              // 只保留當前需要的站點數據，避免累積
+              if (STATION_IDS.includes(stationId)) {
+                newData[stationId] = prev[stationId] || [];
+              }
               return;
             }
 
@@ -141,9 +156,22 @@ const ChartSection = React.memo(() => {
             }
           });
 
+          // 只保留當前需要的站點數據
+          const filteredData: Record<number, (number | null)[]> = {};
+          STATION_IDS.forEach((stationId: number) => {
+            if (newData[stationId] !== undefined) {
+              filteredData[stationId] = newData[stationId];
+            }
+          });
+
           if (isMountedRef.current && chartWorkerRef.current) {
-            chartWorkerRef.current.processChartData(newData, stationConfigsRef.current).then(processedData => {
+            chartWorkerRef.current.processChartData(filteredData, stationConfigsRef.current).then(processedData => {
               if (isMountedRef.current) {
+                // 清理舊的 datasets 引用以幫助垃圾回收
+                if (prevChartDataRef.current?.datasets) {
+                  prevChartDataRef.current.datasets = [];
+                }
+                prevChartDataRef.current = processedData;
                 setChartData(processedData);
               }
             }).catch(error => {
@@ -153,7 +181,7 @@ const ChartSection = React.memo(() => {
             });
           }
 
-          return newData;
+          return filteredData;
         });
       }
     }, 1000);
@@ -162,10 +190,34 @@ const ChartSection = React.memo(() => {
       isMountedRef.current = false;
       ws.disconnect();
       clearInterval(updateInterval);
+      
+      // 清理緩衝區
+      Object.keys(waveformBuffersRef.current).forEach(key => {
+        waveformBuffersRef.current[parseInt(key)] = [];
+      });
+      waveformBuffersRef.current = {};
+      
+      // 清理配置
+      stationConfigsRef.current = {};
+      
       if (chartWorkerRef.current) {
         chartWorkerRef.current.destroy();
         chartWorkerRef.current = null;
       }
+      
+      // 清理 Chart.js 實例（react-chartjs-2 會在組件卸載時自動清理，但我們確保引用被清除）
+      if (chartRef.current) {
+        // react-chartjs-2 的 ref 可能包含 getChart 方法
+        const chartInstance = (chartRef.current as any)?.getChart?.();
+        if (chartInstance) {
+          chartInstance.destroy?.();
+        }
+        chartRef.current = null;
+      }
+      
+      // 清理 chartData 引用
+      prevChartDataRef.current = null;
+      setChartData({ labels: [], datasets: [] });
     };
   }, []);
 
