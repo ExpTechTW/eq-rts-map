@@ -39,6 +39,7 @@ export interface StationFeature {
     sortKey: number;
     hasAlert?: boolean;
     pga?: number;
+    isConnected?: boolean;
   };
 }
 
@@ -116,11 +117,43 @@ export function getIntensityColor(intensity: number): string {
 
 
 
+// 可重用的 GeoJSON 物件池
+const featurePool: StationFeature[] = [];
+const reusableGeoJSON: StationGeoJSON = {
+  type: 'FeatureCollection',
+  features: []
+};
+
+// 從池中取得或創建 feature
+function getFeature(index: number): StationFeature {
+  if (index < featurePool.length) {
+    return featurePool[index];
+  }
+  const feature: StationFeature = {
+    type: 'Feature',
+    geometry: {
+      type: 'Point',
+      coordinates: [0, 0]
+    },
+    properties: {
+      id: '',
+      code: '',
+      intensity: 0,
+      color: '',
+      sortKey: 0,
+      hasAlert: false,
+      pga: 0
+    }
+  };
+  featurePool.push(feature);
+  return feature;
+}
+
 export function createStationGeoJSON(
   stationMap: Map<string, StationInfo>,
   rtsData: Record<string, RTSData>
 ): StationGeoJSON {
-  const features: StationFeature[] = [];
+  let featureIndex = 0;
 
   for (const [stationId, rts] of Object.entries(rtsData)) {
     const station = stationMap.get(stationId);
@@ -130,27 +163,24 @@ export function createStationGeoJSON(
     const intensity = rts.alert ? rts.I : rts.i;
     const color = getIntensityColor(intensity);
 
-    features.push({
-      type: 'Feature',
-      geometry: {
-        type: 'Point',
-        coordinates: [latestInfo.lon, latestInfo.lat],
-      },
-      properties: {
-        id: stationId,
-        code: latestInfo.code.toString(),
-        intensity,
-        color,
-        sortKey: intensity,
-        hasAlert: rts.alert != undefined,
-        pga: rts.pga || 0,
-      },
-    });
+    // 重用 feature 物件
+    const feature = getFeature(featureIndex);
+    feature.geometry.coordinates[0] = latestInfo.lon;
+    feature.geometry.coordinates[1] = latestInfo.lat;
+    feature.properties.id = stationId;
+    feature.properties.code = latestInfo.code.toString();
+    feature.properties.intensity = intensity;
+    feature.properties.color = color;
+    feature.properties.sortKey = intensity;
+    feature.properties.hasAlert = rts.alert != undefined;
+    feature.properties.pga = rts.pga || 0;
+
+    featureIndex++;
   }
 
-  return {
-    type: 'FeatureCollection',
-    features,
-  };
+  // 設定實際使用的 features 長度
+  reusableGeoJSON.features = featurePool.slice(0, featureIndex);
+
+  return reusableGeoJSON;
 }
 

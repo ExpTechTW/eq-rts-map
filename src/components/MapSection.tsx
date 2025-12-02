@@ -1,9 +1,8 @@
 'use client';
 
 import React, { useMemo, useRef, useState, useEffect, useCallback } from 'react';
-import Map, { NavigationControl, Source, Layer, type MapRef } from 'react-map-gl/maplibre';
+import Map, { type MapRef } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { type StationGeoJSON } from '@/lib/rts';
 import { useRTS } from '@/contexts/RTSContext';
 import regionData from '@/../public/data/region.json';
 import boxData from '@/../public/data/box.json';
@@ -33,60 +32,68 @@ interface AlertTooltip {
   isActive: boolean;
 }
 
+// 快取 region 查詢結果
+const regionNameCache: Record<string, string> = {};
 const getRegionName = (code: string): string => {
+  if (regionNameCache[code]) return regionNameCache[code];
+
   const codeNum = parseInt(code);
   for (const [city, towns] of Object.entries(regionData)) {
     for (const [town, info] of Object.entries(towns as Record<string, any>)) {
       if (info.code === codeNum) {
-        return `${city}${town}`;
+        const name = `${city}${town}`;
+        regionNameCache[code] = name;
+        return name;
       }
     }
   }
+  regionNameCache[code] = code;
   return code;
+};
+
+// 預先建立可重用的 GeoJSON 物件
+const reusableBoxGeoJSON = {
+  type: 'FeatureCollection' as const,
+  features: [] as any[]
+};
+
+const reusableLineGeoJSON = {
+  type: 'FeatureCollection' as const,
+  features: [] as any[]
 };
 
 const MapSection = React.memo(() => {
   const { data: rtsData } = useRTS();
   const mapRef = useRef<MapRef>(null);
-  const [stationData, setStationData] = useState<StationGeoJSON | null>(null);
   const [dataTime, setDataTime] = useState<number>(0);
   const [maxIntensity, setMaxIntensity] = useState<number>(-3);
   const [isMapReady, setIsMapReady] = useState<boolean>(false);
-  const [alertTooltips, setAlertTooltips] = useState<AlertTooltip[]>([]);
-  const [tooltipUsage, setTooltipUsage] = useState<Record<string, boolean>>({});
   const [tooltipSwitchIndex, setTooltipSwitchIndex] = useState<number>(0);
-  const tooltipSwitchIndexRef = useRef<number>(0);
   const [currentTooltipData, setCurrentTooltipData] = useState<AlertTooltip[]>([]);
   const [allAlertStations, setAllAlertStations] = useState<AlertTooltip[]>([]);
   const sourceInitializedRef = useRef<boolean>(false);
-  const isMapReadyRef = useRef<boolean>(false);
-  const updateMapDataRef = useRef<any>(null);
   const [boxVisible, setBoxVisible] = useState<boolean>(true);
-  const isMountedRef = useRef<boolean>(true);
+  const connectedStationsRef = useRef<Set<string>>(new Set());
 
-  const createBoxGeoJSON = useCallback(() => {
+  // 重用 box features 物件
+  const updateBoxGeoJSONInPlace = useCallback(() => {
     if (!rtsData?.box) return null;
 
-    const features = boxData.features.filter((feature: any) => {
-      const boxId = feature.properties.ID;
-      return rtsData.box[boxId] !== undefined;
-    }).map((feature: any) => {
-      const intensity = rtsData.box[feature.properties.ID];
-      return {
-        ...feature,
-        properties: {
-          ...feature.properties,
-          intensity: intensity,
-          sortKey: intensity
-        }
-      };
-    });
+    reusableBoxGeoJSON.features.length = 0;
 
-    return {
-      type: 'FeatureCollection',
-      features
-    };
-  }, [rtsData]);
+    for (const feature of boxData.features as any[]) {
+      const boxId = feature.properties.ID;
+      const intensity = rtsData.box[boxId];
+      if (intensity !== undefined) {
+        // 直接修改原始 feature 的 properties（boxData 是靜態的）
+        feature.properties.intensity = intensity;
+        feature.properties.sortKey = intensity;
+        reusableBoxGeoJSON.features.push(feature);
+      }
+    }
+
+    return reusableBoxGeoJSON;
+  }, [rtsData?.box]);
 
   const intensity_float_to_int = (float: number): number => {
     return float < 0 ? 0 : float < 4.5 ? Math.round(float) : float < 5 ? 5 : float < 5.5 ? 6 : float < 6 ? 7 : float < 6.5 ? 8 : 9;
@@ -205,214 +212,33 @@ const MapSection = React.memo(() => {
     return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
   };
 
-  const calculateDistance = (stationCoords: [number, number], tooltipCoords: [number, number]): number => {
-    const [lon1, lat1] = stationCoords;
-    const [lon2, lat2] = tooltipCoords;
-    return Math.sqrt(Math.pow(lon2 - lon1, 2) + Math.pow(lat2 - lat1, 2));
-  };
-
-  const calculateCrossings = (assignments: Array<{station: AlertTooltip, corner: any}>): number => {
-    const doSegmentsIntersect = (
-      p1: [number, number], p2: [number, number],
-      p3: [number, number], p4: [number, number]
-    ): boolean => {
-      const ccw = (a: [number, number], b: [number, number], c: [number, number]): number => {
-        return (c[1] - a[1]) * (b[0] - a[0]) - (b[1] - a[1]) * (c[0] - a[0]);
-      };
-
-      const d1 = ccw(p3, p4, p1);
-      const d2 = ccw(p3, p4, p2);
-      const d3 = ccw(p1, p2, p3);
-      const d4 = ccw(p1, p2, p4);
-
-      if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
-          ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) {
-        return true;
-      }
-
-      return false;
-    };
-
-    let crossings = 0;
-    for (let i = 0; i < assignments.length; i++) {
-      for (let j = i + 1; j < assignments.length; j++) {
-        const line1Start: [number, number] = assignments[i].station.coordinates;
-        const line1End: [number, number] = assignments[i].corner.position;
-        const line2Start: [number, number] = assignments[j].station.coordinates;
-        const line2End: [number, number] = assignments[j].corner.position;
-
-        if (doSegmentsIntersect(line1Start, line1End, line2Start, line2End)) {
-          crossings++;
-        }
-      }
-    }
-    return crossings;
-  };
-
-  const selectStationsToShow = (alertStations: AlertTooltip[]): AlertTooltip[] => {
+  // 簡化：直接按震度排序，取前 4 個，固定分配到 4 個角落
+  const assignTooltipPositions = useCallback((alertStations: AlertTooltip[]): AlertTooltip[] => {
     if (alertStations.length === 0) return [];
 
-    const sortedStations = [...alertStations].sort((a, b) => b.intensity - a.intensity);
+    // 按震度排序取前 4 個
+    const sorted = alertStations
+      .slice()
+      .sort((a, b) => b.intensity - a.intensity)
+      .slice(0, 4);
 
-    const maxIntensityStation = sortedStations[0];
-    if (!maxIntensityStation) return [];
-
-    if (sortedStations.length === 1) return [maxIntensityStation];
-
-    const remainingStations = sortedStations.slice(1);
-    const selectedStations: AlertTooltip[] = [maxIntensityStation];
-
-    const getRandomOffset = (arrayLength: number): number => {
-      const range = Math.max(1, Math.floor(arrayLength * 0.1));
-      return Math.floor(Math.random() * (range * 2 + 1)) - range;
-    };
-
-    const percentiles = [0.75, 0.5, 0.25];
-    const usedIndices = new Set<number>();
-
-    for (const percentile of percentiles) {
-      if (selectedStations.length >= 4) break;
-
-      const baseIndex = Math.floor(remainingStations.length * percentile);
-      const offset = getRandomOffset(remainingStations.length);
-      let targetIndex = Math.max(0, Math.min(remainingStations.length - 1, baseIndex + offset));
-
-      let attempts = 0;
-      while (usedIndices.has(targetIndex) && attempts < remainingStations.length) {
-        targetIndex = (targetIndex + 1) % remainingStations.length;
-        attempts++;
-      }
-
-      if (!usedIndices.has(targetIndex)) {
-        selectedStations.push(remainingStations[targetIndex]);
-        usedIndices.add(targetIndex);
-      }
-    }
-
-    return selectedStations;
-  };
-
-  const assignTooltipPositions = (alertStations: AlertTooltip[]): AlertTooltip[] => {
-    const selectedStations = selectStationsToShow(alertStations);
-    if (selectedStations.length === 0) return [];
-
-    if (selectedStations.length === 1) {
-      const corner = CORNER_TOOLTIP_POSITIONS[0];
-      return [{
-        ...selectedStations[0],
-        tooltipPosition: corner.position,
-        cornerId: corner.id,
-        isActive: true
-      }];
-    }
-
-    // 限制排列數量以防止記憶體洩漏（最多處理 4 個站點，4! = 24 種排列）
-    const MAX_STATIONS = 4;
-    const stationsToProcess = selectedStations.slice(0, MAX_STATIONS);
-    
-    const generatePermutations = (arr: any[]): any[][] => {
-      if (arr.length <= 1) return [arr];
-      // 如果排列數量過大，使用貪心算法而非生成所有排列
-      if (arr.length > 4) {
-        // 對於超過 4 個的情況，只返回一個簡單的排列
-        return [arr];
-      }
-      
-      // 限制最大排列數量以防止記憶體洩漏
-      const MAX_PERMUTATIONS = 24; // 4! = 24
-      const result: any[][] = [];
-      
-      for (let i = 0; i < arr.length && result.length < MAX_PERMUTATIONS; i++) {
-        const current = arr[i];
-        const remaining = arr.slice(0, i).concat(arr.slice(i + 1));
-        const remainingPerms = generatePermutations(remaining);
-        for (const perm of remainingPerms) {
-          if (result.length >= MAX_PERMUTATIONS) break;
-          result.push([current].concat(perm));
-        }
-        if (result.length >= MAX_PERMUTATIONS) break;
-      }
-      return result;
-    };
-
-    const cornersToUse = CORNER_TOOLTIP_POSITIONS.slice(0, stationsToProcess.length);
-    const allCornerPermutations = generatePermutations(cornersToUse);
-
-    interface Assignment {
-      combination: Array<{station: AlertTooltip, corner: any}>;
-      crossings: number;
-      totalDistance: number;
-    }
-
-    const assignments: Assignment[] = [];
-
-    for (const cornerPerm of allCornerPermutations) {
-      const combination = stationsToProcess.map((station, index) => ({
-        station,
-        corner: cornerPerm[index]
-      }));
-
-      const crossings = calculateCrossings(combination);
-
-      let totalDistance = 0;
-      for (const {station, corner} of combination) {
-        totalDistance += calculateDistance(station.coordinates, corner.position);
-      }
-
-      assignments.push({ combination, crossings, totalDistance });
-    }
-
-    assignments.sort((a, b) => {
-      if (a.crossings !== b.crossings) {
-        return a.crossings - b.crossings;
-      }
-      return a.totalDistance - b.totalDistance;
-    });
-
-    const bestAssignment = assignments[0];
-
-    return bestAssignment.combination.map(({station, corner}) => ({
+    return sorted.map((station, i) => ({
       ...station,
-      tooltipPosition: corner.position,
-      cornerId: corner.id,
+      tooltipPosition: CORNER_TOOLTIP_POSITIONS[i].position,
+      cornerId: CORNER_TOOLTIP_POSITIONS[i].id,
       isActive: true
     }));
-  };
-
-  const updateTooltipData = (positionedTooltips: AlertTooltip[], allStations: AlertTooltip[]): AlertTooltip[] => {
-    if (positionedTooltips.length === 0) return [];
-
-    const stationMap: Record<string, AlertTooltip> = {};
-    allStations.forEach(station => {
-      stationMap[station.stationId] = station;
-    });
-
-    return positionedTooltips.map((tooltip) => {
-      const latestStationData = stationMap[tooltip.stationId];
-
-      if (!latestStationData) {
-        return tooltip;
-      }
-
-      return {
-        ...tooltip,
-        stationCode: latestStationData.stationCode,
-        intensity: latestStationData.intensity,
-        pga: latestStationData.pga,
-        coordinates: latestStationData.coordinates,
-      };
-    });
-  };
+  }, []);
 
   const initializeMapSource = useCallback(() => {
-    if (!mapRef.current || !stationData || sourceInitializedRef.current) return;
+    if (!mapRef.current || !rtsData?.geojson || sourceInitializedRef.current) return;
 
     const map = mapRef.current.getMap();
 
     if (!map.getSource('stations')) {
       map.addSource('stations', {
         type: 'geojson',
-        data: stationData,
+        data: rtsData.geojson,
       });
 
       map.addSource('tooltip-lines', {
@@ -481,98 +307,85 @@ const MapSection = React.memo(() => {
 
       sourceInitializedRef.current = true;
     }
-  }, [stationData]);
+  }, [rtsData?.geojson]);
 
-  const updateMapData = useCallback((newData: StationGeoJSON) => {
-    if (!mapRef.current || !sourceInitializedRef.current) return;
+  // 直接更新 station source，重用 geojson 物件
+  const updateStationSource = useCallback(() => {
+    if (!mapRef.current || !sourceInitializedRef.current || !rtsData?.geojson) return;
 
     const map = mapRef.current.getMap();
     const source = map.getSource('stations') as any;
+    if (!source?.setData) return;
 
-    if (source && source.setData) {
-      source.setData(newData);
+    // 直接修改現有 features 的 isConnected 屬性，不創建新物件
+    const connectedIds = connectedStationsRef.current;
+    for (const feature of rtsData.geojson.features) {
+      feature.properties.isConnected = connectedIds.has(feature.properties.id);
     }
-  }, []);
 
-  const updateBoxData = useCallback(() => {
+    source.setData(rtsData.geojson);
+  }, [rtsData?.geojson]);
+
+  const updateBoxSource = useCallback(() => {
     if (!mapRef.current || !sourceInitializedRef.current) return;
 
     const map = mapRef.current.getMap();
     const source = map.getSource('boxes') as any;
+    if (!source?.setData) return;
 
-    if (source && source.setData) {
-      const boxGeoJSON = createBoxGeoJSON();
-      if (boxGeoJSON) {
-        source.setData(boxGeoJSON);
-      }
+    const boxGeoJSON = updateBoxGeoJSONInPlace();
+    if (boxGeoJSON) {
+      source.setData(boxGeoJSON);
     }
-  }, [createBoxGeoJSON]);
+  }, [updateBoxGeoJSONInPlace]);
 
+  // 重用 line features
   const updateTooltipLines = useCallback((tooltips: AlertTooltip[]) => {
     if (!mapRef.current || !sourceInitializedRef.current) return;
 
     const map = mapRef.current.getMap();
     const source = map.getSource('tooltip-lines') as any;
-    
-    if (source && source.setData) {
-      const lineFeatures = tooltips
-        .filter(tooltip => tooltip.isActive)
-        .map(tooltip => ({
-          type: 'Feature' as const,
+    if (!source?.setData) return;
+
+    reusableLineGeoJSON.features.length = 0;
+
+    for (const tooltip of tooltips) {
+      if (tooltip.isActive) {
+        reusableLineGeoJSON.features.push({
+          type: 'Feature',
           geometry: {
-            type: 'LineString' as const,
+            type: 'LineString',
             coordinates: [tooltip.coordinates, tooltip.tooltipPosition]
           },
           properties: {
             stationId: tooltip.stationId,
             cornerId: tooltip.cornerId
           }
-        }));
-
-      const lineData = {
-        type: 'FeatureCollection' as const,
-        features: lineFeatures
-      };
-
-      source.setData(lineData);
+        });
+      }
     }
+
+    source.setData(reusableLineGeoJSON);
   }, []);
 
   const handleMapLoad = useCallback(() => {
     setIsMapReady(true);
   }, []);
 
+  // 處理 rtsData 變化 - 更新所有資料
   useEffect(() => {
-    isMapReadyRef.current = isMapReady;
-  }, [isMapReady]);
+    if (!rtsData) return;
 
-  useEffect(() => {
-    updateMapDataRef.current = updateMapData;
-  }, [updateMapData]);
+    setDataTime(rtsData.time);
 
-  useEffect(() => {
-    if (!isMountedRef.current || !rtsData) return;
-
-    const data = rtsData;
-
-    if (isMountedRef.current) {
-      setStationData(data.geojson);
-      setDataTime(data.time);
-    }
-
+    // 計算最大震度
     let max = -3;
-    data.geojson.features.forEach((feature) => {
+    const alertStations: AlertTooltip[] = [];
+
+    for (const feature of rtsData.geojson.features) {
       if (feature.properties.intensity > max) {
         max = feature.properties.intensity;
       }
-    });
-    
-    if (isMountedRef.current) {
-      setMaxIntensity(max);
-    }
-
-    const alertStations: AlertTooltip[] = [];
-    data.geojson.features.forEach((feature) => {
       if (feature.properties.hasAlert) {
         alertStations.push({
           stationId: feature.properties.id,
@@ -585,154 +398,82 @@ const MapSection = React.memo(() => {
           isActive: false
         });
       }
-    });
-
-    if (isMountedRef.current) {
-      setAllAlertStations(alertStations);
     }
+
+    setMaxIntensity(max);
+    setAllAlertStations(alertStations);
   }, [rtsData]);
 
+  // 當 allAlertStations 或 tooltipSwitchIndex 變化時，重新計算 tooltip 位置
   useEffect(() => {
-    if (!isMountedRef.current) return;
-    
-    if (allAlertStations.length === 0) {
-      setAlertTooltips([]);
-      return;
-    }
-
-    const positionedTooltips = assignTooltipPositions(allAlertStations);
-    if (isMountedRef.current) {
-      setAlertTooltips(positionedTooltips);
-    }
-  }, [tooltipSwitchIndex]); 
-
-  useEffect(() => {
-    if (!isMountedRef.current) return;
-    
     if (allAlertStations.length === 0) {
       setCurrentTooltipData([]);
+      connectedStationsRef.current.clear();
       return;
     }
 
-    const currentPositions = alertTooltips.length > 0 ? alertTooltips : assignTooltipPositions(allAlertStations);
-    const updatedTooltips = updateTooltipData(currentPositions, allAlertStations);
-    if (isMountedRef.current) {
-      setCurrentTooltipData(updatedTooltips);
+    const positioned = assignTooltipPositions(allAlertStations);
+    setCurrentTooltipData(positioned);
+
+    // 更新連接的站點 ID
+    connectedStationsRef.current.clear();
+    for (const t of positioned) {
+      connectedStationsRef.current.add(t.stationId);
     }
-  }, [allAlertStations, alertTooltips]);
+  }, [allAlertStations, tooltipSwitchIndex, assignTooltipPositions]);
 
+  // 更新地圖資料
   useEffect(() => {
-    if (!rtsData || !isMapReadyRef.current || !sourceInitializedRef.current) return;
+    if (!rtsData || !isMapReady || !sourceInitializedRef.current) return;
 
-    const connectedStationIds = new Set(currentTooltipData.map(t => t.stationId));
-    const updatedGeoJSON = {
-      ...rtsData.geojson,
-      features: rtsData.geojson.features.map((feature) => ({
-        ...feature,
-        properties: {
-          ...feature.properties,
-          isConnected: connectedStationIds.has(feature.properties.id)
-        }
-      }))
-    };
-
-    updateMapDataRef.current(updatedGeoJSON);
+    updateStationSource();
     updateTooltipLines(currentTooltipData);
-  }, [rtsData, currentTooltipData, updateTooltipLines]);
+  }, [rtsData, currentTooltipData, isMapReady, updateStationSource, updateTooltipLines]);
 
+  // 初始化地圖 source
   useEffect(() => {
-    if (isMapReady && stationData) {
+    if (isMapReady && rtsData?.geojson) {
       initializeMapSource();
     }
-  }, [isMapReady, stationData, initializeMapSource]);
+  }, [isMapReady, rtsData?.geojson, initializeMapSource]);
 
+  // Tooltip 切換計時器
   useEffect(() => {
-    isMountedRef.current = true;
-    
     const interval = setInterval(() => {
-      if (!isMountedRef.current) return;
-      setTooltipSwitchIndex(prev => {
-        const newValue = prev + 1;
-        tooltipSwitchIndexRef.current = newValue;
-        return newValue;
-      });
+      setTooltipSwitchIndex(prev => prev + 1);
     }, 3000);
-
-    return () => {
-      clearInterval(interval);
-    };
+    return () => clearInterval(interval);
   }, []);
 
+  // Box 閃爍計時器
   useEffect(() => {
     const interval = setInterval(() => {
-      if (!isMountedRef.current) return;
       setBoxVisible(prev => !prev);
     }, 1000);
-
-    return () => {
-      clearInterval(interval);
-    };
+    return () => clearInterval(interval);
   }, []);
 
+  // Box 可見性
   useEffect(() => {
     if (!mapRef.current || !sourceInitializedRef.current) return;
-
     const map = mapRef.current.getMap();
-    const layer = map.getLayer('box-outlines');
-
-    if (layer) {
+    if (map.getLayer('box-outlines')) {
       map.setLayoutProperty('box-outlines', 'visibility', boxVisible ? 'visible' : 'none');
     }
   }, [boxVisible]);
 
+  // 更新 box 資料
   useEffect(() => {
-    if (!isMountedRef.current) return;
-    
-    if (rtsData && isMapReadyRef.current && sourceInitializedRef.current) {
-      updateBoxData();
+    if (rtsData && isMapReady && sourceInitializedRef.current) {
+      updateBoxSource();
     }
-  }, [rtsData, updateBoxData]);
+  }, [rtsData, isMapReady, updateBoxSource]);
 
-  // 清理 Map 實例和所有資源
+  // 清理
   useEffect(() => {
-    isMountedRef.current = true;
-    
     return () => {
-      isMountedRef.current = false;
-      
-      // 清理 Map 實例
-      if (mapRef.current) {
-        const map = mapRef.current.getMap();
-        if (map) {
-          // 移除所有事件監聽器
-          map.off();
-          // 移除所有圖層和資源
-          try {
-            const sources = ['stations', 'tooltip-lines', 'boxes'];
-            const layers = ['station-circles', 'tooltip-lines', 'box-outlines'];
-            
-            layers.forEach(layerId => {
-              if (map.getLayer(layerId)) {
-                map.removeLayer(layerId);
-              }
-            });
-            
-            sources.forEach(sourceId => {
-              if (map.getSource(sourceId)) {
-                map.removeSource(sourceId);
-              }
-            });
-          } catch (error) {
-            // 忽略清理錯誤
-          }
-        }
-        mapRef.current = null;
-      }
-      
-      // 清理所有 refs
       sourceInitializedRef.current = false;
-      isMapReadyRef.current = false;
-      updateMapDataRef.current = null;
+      connectedStationsRef.current.clear();
     };
   }, []);
 
