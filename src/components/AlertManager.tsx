@@ -37,7 +37,7 @@ const AlertManager = React.memo(() => {
     const shouldAlert = data.box && Object.keys(data.box).length > 0;
     setPreviousHasAlert(hasAlert);
     setHasAlert(shouldAlert);
-  }, [data, hasAlert]);
+  }, [data]);
 
   useEffect(() => {
     if (!isMountedRef.current) return;

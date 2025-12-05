@@ -1,4 +1,3 @@
-// 帶通濾波器實現，參考 accel_bpf/main.go
 
 interface SOSStage {
   b0: number;
@@ -22,7 +21,6 @@ export class BPFFilter {
       const [b0, b1, b2] = numCoeffs;
       const [a0, a1, a2] = den[i];
 
-      // 正規化係數（如果 a0 !== 1.0）
       if (a0 !== 1.0) {
         return {
           b0: b0 / a0,
@@ -71,7 +69,6 @@ export class BPFFilter {
   }
 }
 
-// 濾波器係數（從 accel_bpf/main.go）
 const NUM_LPF: number[][] = [
   [0.8063260828207, 0, 0],
   [1, -0.3349099821478, 1],
@@ -128,7 +125,6 @@ const DEN_HPF: number[][] = [
   [1, 0, 0],
 ];
 
-// 創建帶通濾波器（先高通，後低通）
 export function createBPFFilter(): { hpf: BPFFilter; lpf: BPFFilter } {
   return {
     hpf: new BPFFilter(NUM_HPF, DEN_HPF),
@@ -136,11 +132,8 @@ export function createBPFFilter(): { hpf: BPFFilter; lpf: BPFFilter } {
   };
 }
 
-// 應用帶通濾波（先高通，後低通，與 main.go 一致）
 export function applyBPF(data: number[], hpf: BPFFilter, lpf: BPFFilter): number[] {
-  // 先應用高通濾波器
   let filtered = hpf.applyBuffer(data);
-  // 再應用低通濾波器
   filtered = lpf.applyBuffer(filtered);
   return filtered;
 }
