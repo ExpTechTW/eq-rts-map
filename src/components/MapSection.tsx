@@ -262,7 +262,9 @@ const MapSection = React.memo(() => {
         mapStyle={mapStyle as any}
         attributionControl={false}
         onLoad={() => setIsMapReady(true)}
-        onError={() => {}}
+        onError={() => {
+          // Silent error handling
+        }}
       />
 
       {tooltips.map((t) => {

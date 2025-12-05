@@ -28,7 +28,6 @@ export function RTSProvider({ children }: { children: React.ReactNode }) {
 
       try {
         const newData = await workerManagerRef.current.fetchAndProcessStationData();
-        // 檢查組件是否仍然掛載，避免在卸載後執行 setState
         if (isMountedRef.current) {
           setData(newData);
           setError(null);
