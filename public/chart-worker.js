@@ -12,7 +12,6 @@ const TOP_GAP = BASE_GAP - TOP_BOTTOM_GAP_REDUCTION;
 const MIDDLE_GAP_EXTRA = (TOP_BOTTOM_GAP_REDUCTION * 2) / 4;
 const MIDDLE_GAP = BASE_GAP + MIDDLE_GAP_EXTRA;
 
-// 帶通濾波器實現（參考 accel_bpf/main.go）
 class SOSStage {
   constructor(b0, b1, b2, a1, a2) {
     this.b0 = b0;
@@ -35,7 +34,6 @@ class BPFFilter {
       const [b0, b1, b2] = numCoeffs;
       const [a0, a1, a2] = den[i];
 
-      // 正規化係數（如果 a0 !== 1.0）
       if (a0 !== 1.0) {
         return new SOSStage(b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0);
       }
@@ -68,7 +66,6 @@ class BPFFilter {
   }
 }
 
-// 濾波器係數（從 accel_bpf/main.go）
 const NUM_LPF = [
   [0.8063260828207, 0, 0],
   [1, -0.3349099821478, 1],
@@ -125,15 +122,12 @@ const DEN_HPF = [
   [1, 0, 0],
 ];
 
-// 創建帶通濾波器實例（每個站點需要獨立的濾波器以保持狀態）
-// 限制緩存大小以防止記憶體洩漏（最多保留 10 個站點的濾波器）
 const MAX_FILTER_CACHE_SIZE = 10;
 const filterCache = new Map();
-const filterAccessOrder = []; // 用於 LRU 緩存淘汰
+const filterAccessOrder = [];
 
 function getBPFFilter(stationId) {
   if (!filterCache.has(stationId)) {
-    // 如果緩存已滿，移除最久未使用的
     if (filterCache.size >= MAX_FILTER_CACHE_SIZE) {
       const oldestStationId = filterAccessOrder.shift();
       if (oldestStationId !== undefined) {
@@ -146,7 +140,6 @@ function getBPFFilter(stationId) {
     filterCache.set(stationId, { hpf, lpf });
   }
   
-  // 更新訪問順序（LRU）
   const index = filterAccessOrder.indexOf(stationId);
   if (index > -1) {
     filterAccessOrder.splice(index, 1);
@@ -156,7 +149,6 @@ function getBPFFilter(stationId) {
   return filterCache.get(stationId);
 }
 
-// 清理不再使用的濾波器（可以從外部調用）
 function clearUnusedFilters(activeStationIds) {
   const activeSet = new Set(activeStationIds);
   const toDelete = [];
@@ -176,37 +168,27 @@ function clearUnusedFilters(activeStationIds) {
   });
 }
 
-// 應用帶通濾波（先高通，後低通，與 main.go 一致）
 function applyBPF(data, stationId) {
   if (!data || data.length === 0) return data;
   
-  // 獲取濾波器
   const { hpf, lpf } = getBPFFilter(stationId);
-  
-  // 處理數據，保持濾波器狀態的連續性
-  // 對於 null 值，跳過濾波但保持狀態（使用前一個有效值或 0）
   const result = [];
-  let lastValidValue = 0;
   
   for (let i = 0; i < data.length; i++) {
     const value = data[i];
     
     if (value === null || value === undefined) {
-      // 保持 null 值，不進行濾波
       result.push(null);
     } else {
-      // 應用濾波器（先高通，後低通）
       const hpfValue = hpf.apply(value);
       const filteredValue = lpf.apply(hpfValue);
       result.push(filteredValue);
-      lastValidValue = filteredValue;
     }
   }
   
   return result;
 }
 
-// 顏色生成函數
 function generateColorFromId(id) {
   let hash = 0;
   const str = id.toString();
@@ -252,7 +234,6 @@ function generateColorFromId(id) {
   return `rgb(${r}, ${g}, ${b})`;
 }
 
-// 時間標籤生成
 function generateTimeLabels(length, sampleRate) {
   return Array.from({ length }, (_, i) => {
     const position = length - i;
@@ -267,7 +248,6 @@ function generateTimeLabels(length, sampleRate) {
   });
 }
 
-// 生成通道配置
 function generateChannelConfigs() {
   return [
     { baseline: TOTAL_HEIGHT - TOP_GAP, color: generateColorFromId(STATION_IDS[0]) },
@@ -278,7 +258,6 @@ function generateChannelConfigs() {
   ];
 }
 
-// 處理波形數據
 function processWaveformData(waveformData, stationConfigs) {
   const channelDataArrays = [];
   const channelConfigs = generateChannelConfigs();
@@ -295,7 +274,6 @@ function processWaveformData(waveformData, stationConfigs) {
       } else {
         let stationWaveform = waveformData[stationId] || Array(stationConfig.dataLength).fill(null);
         
-        // 在縮放之前應用帶通濾波器（與 main.go 一致）
         stationWaveform = applyBPF(stationWaveform, stationId);
 
         if (stationConfig.sampleRate === 20) {
@@ -336,7 +314,6 @@ function processWaveformData(waveformData, stationConfigs) {
   return channelDataArrays;
 }
 
-// 計算通道最大值
 function calculateChannelMaxValues(channelDataArrays) {
   const channelConfigs = generateChannelConfigs();
   const channelMaxValues = [];
@@ -365,7 +342,6 @@ function calculateChannelMaxValues(channelDataArrays) {
   return indexToOrder;
 }
 
-// 生成圖表數據集
 function generateChartDatasets(channelDataArrays, indexToOrder) {
   const channelConfigs = generateChannelConfigs();
   const datasets = [];
@@ -405,9 +381,7 @@ function generateChartDatasets(channelDataArrays, indexToOrder) {
   return datasets;
 }
 
-// 處理完整的圖表數據
 function processChartData(waveformData, stationConfigs) {
-  // 清理不再使用的濾波器
   const activeStationIds = Object.keys(waveformData).map(id => parseInt(id));
   clearUnusedFilters(activeStationIds);
   

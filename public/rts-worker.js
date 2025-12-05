@@ -1,12 +1,9 @@
 let latestDataTime = 0;
 
 async function fetchRTSData(replayTime) {
-  let url;
-  if (replayTime === 0) {
-    url = 'https://lb.exptech.dev/api/v1/trem/rts';
-  } else {
-    url = `https://api-1.exptech.dev/api/v2/trem/rts/${replayTime}`;
-  }
+  const url = replayTime === 0
+    ? 'https://lb.exptech.dev/api/v1/trem/rts'
+    : `https://api-1.exptech.dev/api/v2/trem/rts/${replayTime}`;
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 3000);
