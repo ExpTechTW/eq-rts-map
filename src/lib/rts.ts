@@ -60,7 +60,7 @@ const hexToRgb = (hex: string): [number, number, number] => [
 ];
 
 const rgbToHex = (r: number, g: number, b: number): string =>
-  `#${[r, g, b].map(x => Math.round(x).toString(16).padStart(2, '0')).join('')}`;
+  '#' + [r, g, b].map(x => Math.round(x).toString(16).padStart(2, '0')).join('');
 
 export function getIntensityColor(intensity: number): string {
   if (intensity <= COLOR_STOPS[0].v) return COLOR_STOPS[0].c;
@@ -104,13 +104,14 @@ export function createStationGeoJSON(
     const info = station.info[station.info.length - 1];
     const intensity = rts.alert ? rts.I : rts.i;
     const f = getFeature(idx++);
-    f.geometry.coordinates = [info.lon, info.lat];
+    f.geometry.coordinates[0] = info.lon;
+    f.geometry.coordinates[1] = info.lat;
     f.properties.id = id;
     f.properties.code = info.code.toString();
     f.properties.intensity = intensity;
     f.properties.color = getIntensityColor(intensity);
     f.properties.sortKey = intensity;
-    f.properties.hasAlert = rts.alert !== undefined;
+    f.properties.hasAlert = rts.alert != undefined;
     f.properties.pga = rts.pga || 0;
   }
   reusableGeoJSON.features = featurePool.slice(0, idx);

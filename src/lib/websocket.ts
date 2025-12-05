@@ -194,6 +194,7 @@ export class WaveformWebSocket {
     }
 
     if (this.ws) {
+      // 移除所有事件監聽器以防止記憶體洩漏
       this.ws.onopen = null;
       this.ws.onerror = null;
       this.ws.onclose = null;
@@ -202,6 +203,7 @@ export class WaveformWebSocket {
       this.ws = null;
     }
 
+    // 清除回調函數引用
     this.onWaveformCallback = null;
   }
 }

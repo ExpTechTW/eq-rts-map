@@ -138,7 +138,7 @@ export class RTSWorkerManager {
 
   async fetchStationInfo(): Promise<Map<string, StationInfo>> {
     const now = Date.now();
-    const shouldRefresh = !this.stationMapCache || (now - this.stationMapLastFetch) > 600000;
+    const shouldRefresh = !this.stationMapCache || (now - this.stationMapLastFetch) > 600000; // 600秒 = 10分鐘
 
     if (shouldRefresh) {
       const response = await fetch('https://api-1.exptech.dev/api/v1/trem/station');
@@ -174,6 +174,7 @@ export class RTSWorkerManager {
     this.abortPendingRequests();
 
     if (this.worker) {
+      // 移除所有事件監聽器以防止記憶體洩漏
       this.worker.onmessage = null;
       this.worker.onerror = null;
       this.worker.terminate();

@@ -92,7 +92,10 @@ export function useElectronUpdater() {
   }, [isElectron]);
 
   const checkForUpdates = useCallback(async () => {
-    if (!isElectron) return;
+    if (!isElectron) {
+      console.warn('Not running in Electron environment');
+      return;
+    }
 
     setChecking(true);
     setError(null);
@@ -106,7 +109,10 @@ export function useElectronUpdater() {
   }, [isElectron]);
 
   const downloadUpdate = useCallback(async () => {
-    if (!isElectron) return;
+    if (!isElectron) {
+      console.warn('Not running in Electron environment');
+      return;
+    }
 
     setDownloading(true);
     setError(null);
@@ -120,7 +126,11 @@ export function useElectronUpdater() {
   }, [isElectron]);
 
   const installUpdate = useCallback(() => {
-    if (!isElectron) return;
+    if (!isElectron) {
+      console.warn('Not running in Electron environment');
+      return;
+    }
+
     window.electronAPI!.installUpdate();
   }, [isElectron]);
 
