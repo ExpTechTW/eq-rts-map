@@ -133,6 +133,8 @@ export function createBPFFilter(): { hpf: BPFFilter; lpf: BPFFilter } {
 }
 
 export function applyBPF(data: number[], hpf: BPFFilter, lpf: BPFFilter): number[] {
+  hpf.reset();
+  lpf.reset();
   let filtered = hpf.applyBuffer(data);
   filtered = lpf.applyBuffer(filtered);
   return filtered;
