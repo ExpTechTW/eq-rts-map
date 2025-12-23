@@ -1,6 +1,6 @@
 {
   "name": "eq-rts-map",
-  "version": "1.0.0-pre.2",
+  "version": "1.0.0-rc.1",
   "description": "EQ RTS Map",
   "author": "ExpTech Studio <ExpTech.tw@gmail.com>",
   "type": "module",
