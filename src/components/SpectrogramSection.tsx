@@ -8,9 +8,11 @@ const DISPLAY_DURATION = 60;
 const LEFT_AXIS_WIDTH = 20;
 const BOTTOM_AXIS_HEIGHT = 24;
 
+type StationConfig = { sampleRate: number; dataLength: number; scale: number };
+
 interface SpectrogramSectionProps {
   waveformData: Record<number, (number | null)[]>;
-  stationConfigs: Record<number, { sampleRate: number; dataLength: number; scale: number }>;
+  stationConfigs: Record<number, StationConfig>;
 }
 
 const SpectrogramSection = React.memo(({ waveformData, stationConfigs }: SpectrogramSectionProps) => {
@@ -19,10 +21,8 @@ const SpectrogramSection = React.memo(({ waveformData, stationConfigs }: Spectro
   const spectrogramsRef = useRef<Map<number, Spectrogram>>(new Map());
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
 
-
   const getMaxFreq = useCallback((stationId: number) => {
-    const config = stationConfigs[stationId];
-    return config ? config.sampleRate / 2 : 25;
+    return stationConfigs[stationId]?.sampleRate / 2 || 25;
   }, [stationConfigs]);
 
   useEffect(() => {
@@ -30,15 +30,14 @@ const SpectrogramSection = React.memo(({ waveformData, stationConfigs }: Spectro
     if (!container) return;
 
     const updateSize = () => {
-      const rect = container.getBoundingClientRect();
-      setContainerSize({ width: rect.width, height: rect.height });
+      const { width, height } = container.getBoundingClientRect();
+      setContainerSize({ width, height });
     };
 
     updateSize();
-    const resizeObserver = new ResizeObserver(updateSize);
-    resizeObserver.observe(container);
-
-    return () => resizeObserver.disconnect();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(container);
+    return () => observer.disconnect();
   }, []);
 
   useEffect(() => {
@@ -48,12 +47,12 @@ const SpectrogramSection = React.memo(({ waveformData, stationConfigs }: Spectro
     };
   }, []);
 
+  const spectrogramWidth = containerSize.width - LEFT_AXIS_WIDTH;
+  const spectrogramHeight = containerSize.height - BOTTOM_AXIS_HEIGHT;
+  const channelHeight = spectrogramHeight / STATION_IDS.length;
+
   const renderSpectrograms = useCallback(() => {
     if (containerSize.width === 0 || containerSize.height === 0) return;
-
-    const spectrogramWidth = containerSize.width - LEFT_AXIS_WIDTH;
-    const spectrogramAreaHeight = containerSize.height - BOTTOM_AXIS_HEIGHT;
-    const channelHeight = spectrogramAreaHeight / STATION_IDS.length;
 
     STATION_IDS.forEach((stationId, index) => {
       const canvas = canvasRefs.current[index];
@@ -71,13 +70,11 @@ const SpectrogramSection = React.memo(({ waveformData, stationConfigs }: Spectro
         return;
       }
 
-      const sampleRate = config.sampleRate;
-      const processedData = data.map(v => v === null ? 0 : v);
-
+      const { sampleRate } = config;
+      const processedData = data.map(v => v ?? 0);
       if (processedData.length < 64) return;
 
       let spectrogram = spectrogramsRef.current.get(stationId);
-
       if (!spectrogram || spectrogram.getSampleRate() !== sampleRate) {
         spectrogram?.dispose();
         spectrogram = new Spectrogram({
@@ -95,7 +92,6 @@ const SpectrogramSection = React.memo(({ waveformData, stationConfigs }: Spectro
 
       const floatData = new Float32Array(processedData);
       spectrogram.setData(floatData);
-
       spectrogram.render({
         canvas,
         width: spectrogramWidth,
@@ -104,33 +100,25 @@ const SpectrogramSection = React.memo(({ waveformData, stationConfigs }: Spectro
         freqRange: [0, sampleRate / 2],
       });
     });
-  }, [waveformData, stationConfigs, containerSize]);
+  }, [waveformData, stationConfigs, containerSize, spectrogramWidth, channelHeight]);
 
   useEffect(() => {
     renderSpectrograms();
   }, [renderSpectrograms]);
 
-  const spectrogramAreaHeight = containerSize.height - BOTTOM_AXIS_HEIGHT;
-  const channelHeight = spectrogramAreaHeight / STATION_IDS.length;
-  const spectrogramWidth = containerSize.width - LEFT_AXIS_WIDTH;
-
-  const timeLabels = useMemo(() => {
-    const labels = [];
-    for (let i = DISPLAY_DURATION; i >= 0; i -= 10) {
-      labels.push(i);
-    }
-    return labels;
-  }, []);
+  const timeLabels = useMemo(() =>
+    Array.from({ length: 7 }, (_, i) => DISPLAY_DURATION - i * 10),
+  []);
 
   return (
     <div ref={containerRef} className="w-full h-full flex flex-col bg-gray-900">
       <div className="flex flex-1" style={{ height: `calc(100% - ${BOTTOM_AXIS_HEIGHT}px)` }}>
-        {/* Left Hz axis */}
+        {/* Hz axis */}
         <div className="flex flex-col" style={{ width: LEFT_AXIS_WIDTH }}>
-          {STATION_IDS.map((stationId) => {
+          {STATION_IDS.map(stationId => {
             const maxFreq = getMaxFreq(stationId);
             return (
-              <div key={stationId} className="relative flex flex-col justify-between text-[9px] text-gray-400 pr-1" style={{ height: `${100 / STATION_IDS.length}%` }}>
+              <div key={stationId} className="flex-1 flex flex-col justify-between text-[9px] text-gray-400 pr-1">
                 <span className="text-right">{maxFreq}</span>
                 <span className="text-right">{Math.round(maxFreq / 2)}</span>
                 <span className="text-right">0</span>
@@ -139,41 +127,43 @@ const SpectrogramSection = React.memo(({ waveformData, stationConfigs }: Spectro
           })}
         </div>
 
-        {/* Spectrogram area */}
+        {/* Spectrogram canvases */}
         <div className="flex-1 flex flex-col">
           {STATION_IDS.map((stationId, index) => {
             const config = stationConfigs[stationId];
             const isSENet = config?.scale === 20;
 
             return (
-              <div key={stationId} className="relative" style={{ height: `${100 / STATION_IDS.length}%` }}>
+              <div key={stationId} className="relative flex-1">
                 <canvas
                   ref={el => { canvasRefs.current[index] = el; }}
                   width={spectrogramWidth || 800}
                   height={channelHeight || 100}
-                  style={{ width: '100%', height: '100%' }}
+                  className="w-full h-full"
                 />
                 <div className="absolute left-2 top-1 z-10">
                   <div className="text-xs font-semibold px-2 py-1 rounded" style={{ color: '#fff', backgroundColor: '#000', border: '1px solid rgba(255,255,255,0.2)' }}>
                     <div>{stationId}</div>
-                    {config && <div className="text-[10px] font-medium" style={{ color: isSENet ? '#3b82f6' : '#eab308' }}>{isSENet ? 'SE-Net' : 'MS-Net'}</div>}
+                    {config && (
+                      <div className="text-[10px] font-medium" style={{ color: isSENet ? '#3b82f6' : '#eab308' }}>
+                        {isSENet ? 'SE-Net' : 'MS-Net'}
+                      </div>
+                    )}
                   </div>
                 </div>
-                {index < STATION_IDS.length - 1 && <div className="absolute bottom-0 left-0 right-0 h-px bg-white z-10" />}
+                {index < STATION_IDS.length - 1 && <div className="absolute bottom-0 inset-x-0 h-px bg-white z-10" />}
               </div>
             );
           })}
         </div>
       </div>
 
-      {/* Bottom time axis */}
+      {/* Time axis */}
       <div className="flex" style={{ height: BOTTOM_AXIS_HEIGHT }}>
         <div style={{ width: LEFT_AXIS_WIDTH }} className="flex items-center justify-end pr-1 text-[9px] text-gray-500">Hz</div>
         <div className="flex-1 relative border-t border-gray-600">
           <div className="absolute inset-0 flex justify-between items-center px-1 text-[10px] text-gray-400">
-            {timeLabels.map(sec => (
-              <span key={sec}>{sec}s</span>
-            ))}
+            {timeLabels.map(sec => <span key={sec}>{sec}s</span>)}
           </div>
         </div>
       </div>
