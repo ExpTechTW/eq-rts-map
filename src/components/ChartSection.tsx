@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useState, useEffect, useCallback } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { useTheme } from 'next-themes';
 import { WaveformWebSocket, type WaveformData } from '@/lib/websocket';
 import { ChartWorkerManager, type StationConfig } from '@/lib/chart-worker';
@@ -11,58 +11,40 @@ import SpectrogramSection from './SpectrogramSection';
 const DISPLAY_DURATION = 60;
 const STATION_IDS = [4812424, 6126556, 11336952, 11334880, 1480496];
 const TOTAL_HEIGHT = 630;
-const CHANNEL_LABEL_OFFSETS = [30, 45, 50, 60, 70];
+const LABEL_OFFSETS = [30, 45, 50, 60, 70];
 
 type DisplayMode = 'waveform' | 'spectrogram';
 
-interface ChartSectionProps {
-  displayMode?: DisplayMode;
-}
-
-const ChartSection = React.memo(({ displayMode = 'waveform' }: ChartSectionProps) => {
+const ChartSection = React.memo(({ displayMode = 'waveform' }: { displayMode?: DisplayMode }) => {
   const { resolvedTheme } = useTheme();
   const [waveformData, setWaveformData] = useState<Record<number, (number | null)[]>>({});
   const [stationConfigs, setStationConfigs] = useState<Record<number, StationConfig>>({});
   const [channelConfigs, setChannelConfigs] = useState<ChannelConfig[]>([]);
   const [renderData, setRenderData] = useState<WaveformRenderData | null>(null);
 
-  const waveformBuffersRef = useRef<Record<number, number[]>>({});
-  const stationConfigsRef = useRef<Record<number, StationConfig>>({});
-  const chartWorkerRef = useRef<ChartWorkerManager | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const rendererRef = useRef<WaveformRenderer | null>(null);
-  const isMountedRef = useRef(true);
+  const buffers = useRef<Record<number, number[]>>({});
+  const configs = useRef<Record<number, StationConfig>>({});
+  const worker = useRef<ChartWorkerManager | null>(null);
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const renderer = useRef<WaveformRenderer | null>(null);
+  const mounted = useRef(true);
 
-  // Initialize renderer
   useEffect(() => {
-    rendererRef.current = new WaveformRenderer();
-    return () => {
-      rendererRef.current?.dispose();
-      rendererRef.current = null;
-    };
+    renderer.current = new WaveformRenderer();
+    return () => { renderer.current?.dispose(); };
   }, []);
 
-  // Render waveform when data or theme changes
   useEffect(() => {
-    if (displayMode !== 'waveform') return;
-    if (!canvasRef.current || !rendererRef.current || !renderData) return;
-
-    rendererRef.current.render(
-      canvasRef.current,
-      renderData,
-      resolvedTheme === 'dark' ? 'dark' : 'light'
-    );
+    if (displayMode !== 'waveform' || !canvas.current || !renderer.current || !renderData) return;
+    renderer.current.render(canvas.current, renderData, resolvedTheme === 'dark' ? 'dark' : 'light');
   }, [renderData, resolvedTheme, displayMode]);
 
-  // WebSocket and data management
   useEffect(() => {
-    isMountedRef.current = true;
-    chartWorkerRef.current = new ChartWorkerManager();
-    chartWorkerRef.current.generateChannelConfigs().then(configs => {
-      if (isMountedRef.current) setChannelConfigs(configs);
-    });
+    mounted.current = true;
+    worker.current = new ChartWorkerManager();
+    worker.current.generateChannelConfigs().then(c => mounted.current && setChannelConfigs(c));
 
-    STATION_IDS.forEach(id => { waveformBuffersRef.current[id] = []; });
+    STATION_IDS.forEach(id => { buffers.current[id] = []; });
 
     const ws = new WaveformWebSocket({
       wsUrl: 'ws://lb.exptech.dev/ws',
@@ -72,102 +54,77 @@ const ChartSection = React.memo(({ displayMode = 'waveform' }: ChartSectionProps
     });
 
     ws.onWaveform((data: WaveformData) => {
-      if (!isMountedRef.current) return;
-
-      if (!stationConfigsRef.current[data.id]) {
-        const config: StationConfig = {
+      if (!mounted.current) return;
+      if (!configs.current[data.id]) {
+        const cfg: StationConfig = {
           sampleRate: data.sampleRate,
           dataLength: data.sampleRate * DISPLAY_DURATION,
           scale: data.precision === 2 ? 20 : 15000,
         };
-        stationConfigsRef.current[data.id] = config;
-        if (isMountedRef.current) setStationConfigs(prev => ({ ...prev, [data.id]: config }));
+        configs.current[data.id] = cfg;
+        setStationConfigs(prev => ({ ...prev, [data.id]: cfg }));
       }
-
-      const buffer = waveformBuffersRef.current[data.id] ??= [];
-      const maxSize = stationConfigsRef.current[data.id]?.sampleRate * 10 || 1000;
-      buffer.push(...data.X);
-      if (buffer.length > maxSize) buffer.splice(0, buffer.length - maxSize);
+      const buf = buffers.current[data.id] ??= [];
+      const max = configs.current[data.id]?.sampleRate * 10 || 1000;
+      buf.push(...data.X);
+      if (buf.length > max) buf.splice(0, buf.length - max);
     });
 
     ws.connect().catch(() => {});
 
-    const updateInterval = setInterval(() => {
-      if (!isMountedRef.current || !chartWorkerRef.current) return;
+    const interval = setInterval(() => {
+      if (!mounted.current || !worker.current) return;
 
       setWaveformData(prev => {
-        if (!isMountedRef.current) return prev;
-
-        const newData: Record<number, (number | null)[]> = {};
-
-        STATION_IDS.forEach(stationId => {
-          const config = stationConfigsRef.current[stationId];
-          if (!config) {
-            newData[stationId] = prev[stationId] || [];
-            return;
-          }
-
-          const { dataLength, sampleRate } = config;
-          const currentData = prev[stationId] || Array(dataLength).fill(null);
-          const buffer = waveformBuffersRef.current[stationId] || [];
-          const incoming = buffer.length > 0 ? buffer.splice(0) : Array(sampleRate).fill(null);
-
-          const combined = [...currentData, ...incoming];
-          while (combined.length > dataLength) combined.shift();
-          newData[stationId] = combined;
-        });
-
-        // Use Canvas-specific processing
-        chartWorkerRef.current?.processChartDataForCanvas(newData, stationConfigsRef.current)
-          .then(data => { if (isMountedRef.current) setRenderData(data); })
-          .catch(() => {});
-
-        return newData;
+        const next: Record<number, (number | null)[]> = {};
+        for (const id of STATION_IDS) {
+          const cfg = configs.current[id];
+          if (!cfg) { next[id] = prev[id] || []; continue; }
+          const cur = prev[id] || Array(cfg.dataLength).fill(null);
+          const buf = buffers.current[id] || [];
+          const inc = buf.length > 0 ? buf.splice(0) : Array(cfg.sampleRate).fill(null);
+          const combined = [...cur, ...inc];
+          while (combined.length > cfg.dataLength) combined.shift();
+          next[id] = combined;
+        }
+        worker.current?.processChartDataForCanvas(next, configs.current)
+          .then(d => mounted.current && setRenderData(d)).catch(() => {});
+        return next;
       });
     }, 1000);
 
     return () => {
-      isMountedRef.current = false;
+      mounted.current = false;
       ws.disconnect();
-      clearInterval(updateInterval);
-      chartWorkerRef.current?.destroy();
-      chartWorkerRef.current = null;
+      clearInterval(interval);
+      worker.current?.destroy();
     };
   }, []);
-
-  const renderStationLabel = useCallback((config: ChannelConfig, index: number) => {
-    const topPct = ((TOTAL_HEIGHT - (config.baseline + CHANNEL_LABEL_OFFSETS[index])) / TOTAL_HEIGHT) * 100;
-    const stationId = STATION_IDS[index];
-    const stationConfig = stationConfigs[stationId];
-    const isSENet = stationConfig?.scale === 20;
-
-    return (
-      <div key={index} className="absolute -translate-y-1/2" style={{ top: `${topPct}%` }}>
-        <div className="text-xs font-semibold px-2 py-1 rounded" style={{ color: '#fff', backgroundColor: '#000', border: '1px solid rgba(255,255,255,0.2)' }}>
-          <div>{stationId}</div>
-          {stationConfig && (
-            <div className="text-[10px] font-medium" style={{ color: isSENet ? '#3b82f6' : '#eab308' }}>
-              {isSENet ? 'SE-Net' : 'MS-Net'}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }, [stationConfigs]);
 
   return (
     <div className="w-1/2 h-full bg-gray-50 dark:bg-gray-900 relative">
       {displayMode === 'waveform' ? (
         <>
           <div className="absolute left-2 top-0 bottom-0 z-10 pointer-events-none">
-            {channelConfigs.map(renderStationLabel)}
+            {channelConfigs.map((cfg, i) => {
+              const top = ((TOTAL_HEIGHT - (cfg.baseline + LABEL_OFFSETS[i])) / TOTAL_HEIGHT) * 100;
+              const id = STATION_IDS[i];
+              const isSE = stationConfigs[id]?.scale === 20;
+              return (
+                <div key={i} className="absolute -translate-y-1/2" style={{ top: `${top}%` }}>
+                  <div className="text-xs font-semibold px-2 py-1 rounded bg-black text-white border border-white/20">
+                    <div>{id}</div>
+                    {stationConfigs[id] && (
+                      <div className="text-[10px] font-medium" style={{ color: isSE ? '#3b82f6' : '#eab308' }}>
+                        {isSE ? 'SE-Net' : 'MS-Net'}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
-          <div className="absolute inset-0">
-            <canvas
-              ref={canvasRef}
-              className="w-full h-full"
-            />
-          </div>
+          <canvas ref={canvas} className="absolute inset-0 w-full h-full" />
         </>
       ) : (
         <SpectrogramSection waveformData={waveformData} stationConfigs={stationConfigs} />
@@ -177,5 +134,4 @@ const ChartSection = React.memo(({ displayMode = 'waveform' }: ChartSectionProps
 });
 
 ChartSection.displayName = 'ChartSection';
-
 export default ChartSection;

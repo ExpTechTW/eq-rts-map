@@ -2,25 +2,6 @@ import { FFTExecutor } from '../dsp/fft';
 import { createWindow } from '../dsp/window';
 import { SpectrogramConfig, SpectrogramData } from './SpectrogramModel';
 
-export class DataChunk {
-    public id: string;
-    public startTime: number;
-    public endTime: number;
-    public startIndex: number;
-    public endIndex: number;
-
-    public image: ImageBitmap | null = null;
-    public isProcessing: boolean = false;
-
-    constructor(id: string, startIdx: number, endIdx: number, sampleRate: number) {
-        this.id = id;
-        this.startIndex = startIdx;
-        this.endIndex = endIdx;
-        this.startTime = startIdx / sampleRate;
-        this.endTime = endIdx / sampleRate;
-    }
-}
-
 export class ChunkProcessor {
     private fft: FFTExecutor;
     private windowBuffer: Float32Array;
