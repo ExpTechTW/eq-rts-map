@@ -3,6 +3,7 @@ import { autoUpdater } from 'electron-updater';
 import serve from 'electron-serve';
 import path from 'path';
 
+const Lock = app.requestSingleInstanceLock();
 const isProd = app.isPackaged;
 const loadURL = serve({
   directory: 'out',
@@ -26,6 +27,17 @@ const setupDock = () => {
     app.dock.setBadge('');
   }
 };
+
+if (!Lock) {
+    app.quit();
+} else {
+    app.on('second-instance', () => {
+        if (mainWindow) {
+            if (mainWindow.isMinimized()) mainWindow.restore();
+            mainWindow.focus();
+        }
+    });
+}
 
 let mainWindow: BrowserWindow | null;
 let isQuitting = false;
