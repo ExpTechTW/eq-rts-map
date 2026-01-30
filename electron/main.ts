@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, nativeImage, Tray, Menu } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import serve from 'electron-serve';
 import path from 'path';
@@ -9,12 +9,18 @@ const loadURL = serve({
   scheme: 'app'
 });
 
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  app.quit();
+}
+
 const setupDock = () => {
   if (process.platform === 'darwin' && app.dock) {
-    const iconPath = isProd 
+    const iconPath = isProd
       ? path.join(process.resourcesPath, 'icons', 'app.png')
       : path.join(app.getAppPath(), 'public', 'icons', 'app.png');
-    
+
     try {
       const dockIcon = nativeImage.createFromPath(iconPath);
       if (!dockIcon.isEmpty()) {
@@ -27,7 +33,66 @@ const setupDock = () => {
   }
 };
 
+const createTray = () => {
+  const iconPath = isProd
+    ? path.join(process.resourcesPath, 'icons', process.platform === 'win32' ? 'app.ico' : 'app.png')
+    : path.join(app.getAppPath(), 'public', 'icons', process.platform === 'win32' ? 'app.ico' : 'app.png');
+
+  tray = new Tray(iconPath);
+
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: '顯示視窗',
+      click: () => {
+        if (mainWindow) {
+          if (mainWindow.isMinimized()) {
+            mainWindow.restore();
+          }
+          if (!mainWindow.isVisible()) {
+            mainWindow.show();
+          }
+          mainWindow.focus();
+        }
+      }
+    },
+    {
+      label: '隱藏視窗',
+      click: () => {
+        if (mainWindow) {
+          mainWindow.hide();
+        }
+      }
+    },
+    { type: 'separator' },
+    {
+      label: '退出',
+      click: () => {
+        isQuitting = true;
+        app.quit();
+      }
+    }
+  ]);
+
+  tray.setToolTip('EQ RTS Map');
+  tray.setContextMenu(contextMenu);
+
+  tray.on('click', () => {
+    if (mainWindow) {
+      if (mainWindow.isVisible()) {
+        mainWindow.hide();
+      } else {
+        if (mainWindow.isMinimized()) {
+          mainWindow.restore();
+        }
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    }
+  });
+};
+
 let mainWindow: BrowserWindow | null;
+let tray: Tray | null = null;
 let isQuitting = false;
 
 const createMainWindow = async (): Promise<BrowserWindow> => {
@@ -125,10 +190,26 @@ autoUpdater.on('error', (err) => {
   }
 });
 
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+
+    if (!mainWindow.isVisible()) {
+      mainWindow.show();
+    }
+
+    mainWindow.focus();
+    mainWindow.moveTop();
+  }
+});
+
 (async () => {
   await app.whenReady();
 
   setupDock();
+  createTray();
 
   ipcMain.handle('get-app-version', () => {
     return app.getVersion();
@@ -258,7 +339,7 @@ autoUpdater.on('error', (err) => {
 })();
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  if (!tray && process.platform !== 'darwin') {
     app.quit();
   }
 });
@@ -270,6 +351,11 @@ app.on('before-quit', () => {
 app.on('will-quit', () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.removeAllListeners();
+  }
+
+  if (tray) {
+    tray.destroy();
+    tray = null;
   }
 });
 
