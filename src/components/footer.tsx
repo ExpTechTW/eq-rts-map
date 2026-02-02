@@ -52,7 +52,7 @@ export default function Footer({ displayMode = 'waveform', onDisplayModeChange }
         {accessToken && user ? (
           <>
             <span className="text-[10px] text-muted-foreground max-w-[100px] truncate" title={user.email}>
-              {user.email}
+              {user.email.split('@')[0]}
             </span>
             <Button
               variant="ghost"
