@@ -23,6 +23,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
+  oauthExchange: (code: string, redirectUri: string, codeVerifier: string) =>
+    ipcRenderer.invoke('oauth-exchange', code, redirectUri, codeVerifier),
+  oauthUserInfo: (accessToken: string) =>
+    ipcRenderer.invoke('oauth-userinfo', accessToken),
+  onOAuthCallback: (callback: (params: { code: string; state: string }) => void) => {
+    const fn = (_: unknown, params: { code: string; state: string }) => callback(params);
+    ipcRenderer.on('oauth-callback', fn);
+    return () => ipcRenderer.removeListener('oauth-callback', fn);
+  },
 
   getAudioPath: (audioFile: string) => ipcRenderer.invoke('get-audio-path', audioFile),
 

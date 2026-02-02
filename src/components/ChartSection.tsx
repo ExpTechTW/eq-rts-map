@@ -7,6 +7,7 @@ import { ChartWorkerManager, type StationConfig } from '@/lib/chart-worker';
 import { WaveformRenderer } from '@/lib/waveform/WaveformRenderer';
 import type { WaveformRenderData, ChannelConfig } from '@/lib/waveform/types';
 import SpectrogramSection from './SpectrogramSection';
+import { useAuth } from '@/contexts/AuthContext';
 
 const DISPLAY_DURATION = 60;
 const STATION_IDS = [4812424, 6126556, 11336952, 11334880, 1480496];
@@ -15,8 +16,12 @@ const LABEL_OFFSETS = [30, 45, 50, 60, 70];
 
 type DisplayMode = 'waveform' | 'spectrogram';
 
+const FALLBACK_WS_TOKEN = '48f185d188288f5e613e5878e0c25e462543dbec8c1993b0b16a4d758e6ffd68';
+
 const ChartSection = React.memo(({ displayMode = 'waveform' }: { displayMode?: DisplayMode }) => {
   const { resolvedTheme } = useTheme();
+  const { accessToken } = useAuth();
+  const token = accessToken ?? FALLBACK_WS_TOKEN;
   const [waveformData, setWaveformData] = useState<Record<number, (number | null)[]>>({});
   const [stationConfigs, setStationConfigs] = useState<Record<number, StationConfig>>({});
   const [channelConfigs, setChannelConfigs] = useState<ChannelConfig[]>([]);
@@ -48,7 +53,7 @@ const ChartSection = React.memo(({ displayMode = 'waveform' }: { displayMode?: D
 
     const ws = new WaveformWebSocket({
       wsUrl: 'ws://lb.exptech.dev/ws',
-      token: '48f185d188288f5e613e5878e0c25e462543dbec8c1993b0b16a4d758e6ffd68',
+      token,
       topics: ['websocket.trem.rtw.v1'],
       stationIds: STATION_IDS
     });

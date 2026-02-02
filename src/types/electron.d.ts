@@ -27,6 +27,9 @@ export interface ElectronAPI {
   removeUpdateListeners: () => void;
 
   openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
+  oauthExchange: (code: string, redirectUri: string, codeVerifier: string) => Promise<{ accessToken: string }>;
+  oauthUserInfo: (accessToken: string) => Promise<{ sub: string; email: string }>;
+  onOAuthCallback: (callback: (params: { code: string; state: string }) => void) => () => void;
   getAudioPath: (audioFile: string) => Promise<string>;
 
   setDockBadge: (text: string) => Promise<{ success: boolean; error?: string }>;

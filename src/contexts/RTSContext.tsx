@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { RTSWorkerManager } from '@/lib/rts-worker';
 import { type ProcessedStationData } from '@/lib/rts';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface RTSContextType {
   data: ProcessedStationData | null;
@@ -13,6 +14,7 @@ interface RTSContextType {
 const RTSContext = createContext<RTSContextType | undefined>(undefined);
 
 export function RTSProvider({ children }: { children: React.ReactNode }) {
+  const { accessToken } = useAuth();
   const [data, setData] = useState<ProcessedStationData | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<Error | null>(null);
@@ -21,7 +23,7 @@ export function RTSProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     isMountedRef.current = true;
-    workerManagerRef.current = new RTSWorkerManager();
+    workerManagerRef.current = new RTSWorkerManager(accessToken ?? undefined);
 
     const fetchData = async () => {
       if (!workerManagerRef.current || !isMountedRef.current) return;
@@ -56,7 +58,7 @@ export function RTSProvider({ children }: { children: React.ReactNode }) {
         workerManagerRef.current = null;
       }
     };
-  }, []);
+  }, [accessToken]);
 
   return (
     <RTSContext.Provider value={{ data, isLoading, error }}>

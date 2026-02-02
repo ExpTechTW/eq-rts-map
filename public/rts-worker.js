@@ -1,9 +1,12 @@
 let latestDataTime = 0;
 
-async function fetchRTSData(replayTime) {
+async function fetchRTSData(replayTime, token) {
   const url = replayTime === 0
     ? 'https://lb.exptech.dev/api/v1/trem/rts'
     : `https://api-1.exptech.dev/api/v2/trem/rts/${replayTime}`;
+
+  const headers = {};
+  if (token) headers['Authorization'] = 'Bearer ' + token;
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 3000);
@@ -11,6 +14,7 @@ async function fetchRTSData(replayTime) {
   try {
     const response = await fetch(url, {
       signal: controller.signal,
+      headers,
     });
     clearTimeout(timeoutId);
     
@@ -41,7 +45,7 @@ self.onmessage = async function(e) {
   try {
     switch (type) {
       case 'FETCH_RTS_DATA':
-        const rtsResponse = await fetchRTSData(data.replayTime);
+        const rtsResponse = await fetchRTSData(data.replayTime, data.token);
         self.postMessage({
           type: 'RTS_DATA_SUCCESS',
           data: rtsResponse,

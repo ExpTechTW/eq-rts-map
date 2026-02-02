@@ -2,6 +2,11 @@ appId: com.eq-rts-map
 productName: eq-rts-map
 copyright: Copyright © 2025 ExpTech Studio
 
+protocols:
+  - name: "eq-rts-map"
+    schemes:
+      - eq-rts-map
+
 directories:
   output: dist
 
@@ -13,6 +18,12 @@ files:
   - out/**/*
   - package.json
   - "!dist"
+
+extraResources:
+  - from: ./public/icons/
+    to: icons/
+  - from: ./public/audios/
+    to: audios/
 
 compression: maximum
 asar: true
@@ -33,11 +44,17 @@ nsis:
   perMachine: false
   allowToChangeInstallationDirectory: false
   deleteAppDataOnUninstall: false
+  include: ./assets/installer.nsh
 
 mac:
   category: public.app-category.productivity
   icon: ./public/icons/app.png
   hardenedRuntime: true
+  extendInfo:
+    CFBundleURLTypes:
+      - CFBundleURLName: "eq-rts-map OAuth callback"
+        CFBundleURLSchemes: ["eq-rts-map"]
+        CFBundleURLRole: "Editor"
   target:
     - target: dmg
       arch:
@@ -54,6 +71,8 @@ mac:
 linux:
   category: Development
   icon: ./public/icons/app.png
+  mimeTypes:
+    - x-scheme-handler/eq-rts-map
   target:
     - target: AppImage
       arch:

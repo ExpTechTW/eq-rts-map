@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import './globals.css'
 import { ThemeProvider } from '@/components/ThemeProvider';
+import { AuthWrapper } from '@/components/AuthWrapper';
 
 export const metadata: Metadata = {
   title: 'EQ RTS MAP',
@@ -21,7 +22,9 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          {children}
+          <AuthWrapper>
+            {children}
+          </AuthWrapper>
         </ThemeProvider>
       </body>
     </html>

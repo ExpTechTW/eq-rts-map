@@ -1,9 +1,10 @@
 'use client';
 
-import { Github, Activity, AudioWaveform, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Github, Activity, AudioWaveform, ChevronLeft, ChevronRight, LogIn, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useState, useEffect } from 'react';
 import { useElectronUpdater } from '@/hooks/useElectronUpdater';
+import { useAuth } from '@/contexts/AuthContext';
 
 type DisplayMode = 'waveform' | 'spectrogram';
 
@@ -14,6 +15,7 @@ interface FooterProps {
 
 export default function Footer({ displayMode = 'waveform', onDisplayModeChange }: FooterProps) {
   const { currentVersion, openExternal } = useElectronUpdater();
+  const { accessToken, user, login, logout, isLoading, error } = useAuth();
   const [version, setVersion] = useState('');
   const [collapsed, setCollapsed] = useState(true);
 
@@ -45,6 +47,35 @@ export default function Footer({ displayMode = 'waveform', onDisplayModeChange }
         >
           {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronLeft className="h-3 w-3" />}
         </Button>
+
+        <Divider />
+        {accessToken && user ? (
+          <>
+            <span className="text-[10px] text-muted-foreground max-w-[100px] truncate" title={user.email}>
+              {user.email}
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => logout()}
+              className="h-5 w-5 hover:bg-accent/50"
+              title="登出"
+            >
+              <LogOut className="h-3 w-3" />
+            </Button>
+          </>
+        ) : (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => login().catch(console.error)}
+            className="h-5 w-5 hover:bg-accent/50"
+            title={error ?? '登入 Exptech'}
+            disabled={isLoading}
+          >
+            <LogIn className="h-3 w-3" />
+          </Button>
+        )}
 
         {!collapsed && (
           <>

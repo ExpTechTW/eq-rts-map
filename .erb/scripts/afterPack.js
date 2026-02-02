@@ -10,8 +10,8 @@ module.exports = async function(context) {
     ? path.join(appOutDir, `${context.packager.appInfo.productFilename}.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources`)
     : path.join(appOutDir, 'locales');
 
-  // 只保留英文
-  const keepLanguages = ['en.lproj', 'en_US.pak'];
+  // 保留英文與繁體中文
+  const keepLanguages = ['en.lproj', 'zh_TW.lproj', 'zh-Hant.lproj', 'en_US.pak', 'zh-TW.pak'];
 
   try {
     if (context.electronPlatformName === 'darwin') {

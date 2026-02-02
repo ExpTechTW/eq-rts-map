@@ -14,8 +14,10 @@ export class RTSWorkerManager {
   private stationMapCache: Map<string, StationInfo> | null = null;
   private stationMapLastFetch = 0;
   private pendingRequests = new Map<string, AbortController>();
+  private token: string | null = null;
 
-  constructor() {
+  constructor(token?: string | null) {
+    this.token = token ?? null;
     this.initWorker();
   }
 
@@ -112,7 +114,7 @@ export class RTSWorkerManager {
       this.onError('DATA_ERROR', errorHandler);
       this.pendingRequests.set(requestId, abortController);
 
-      this.postMessage('FETCH_RTS_DATA', { replayTime: this.replayTime });
+      this.postMessage('FETCH_RTS_DATA', { replayTime: this.replayTime, token: this.token });
 
       if (this.replayTime !== 0) {
         this.replayTime += 1;
@@ -141,7 +143,9 @@ export class RTSWorkerManager {
     const shouldRefresh = !this.stationMapCache || (now - this.stationMapLastFetch) > 600000;
 
     if (shouldRefresh) {
-      const response = await fetch('https://api-1.exptech.dev/api/v1/trem/station');
+      const headers: HeadersInit = {};
+      if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
+      const response = await fetch('https://api-1.exptech.dev/api/v1/trem/station', { headers });
       const data = await response.json();
 
       if (this.stationMapCache) {
